@@ -41,6 +41,8 @@ class GraphOutput:
         assert isinstance(ambient_store, AmbientStore)
         assert isinstance(diffuser_store, DiffuserStore)
 
+        # this controls whether to stop graphing plan/profile view things (the by-case stuff still graphs)
+        self.stop_planprofile_graphs = False
         # Persistent variables
         self.ambient_store           = ambient_store
         self.diffuser_store          = diffuser_store
@@ -192,21 +194,21 @@ class GraphOutput:
         return regime, template
 
     def _verify_custom_var(self, regime, varname, errorname):
-            assert regime and isinstance(regime, str)
-            assert varname and isinstance(varname, str)
-            regime, template = self._get_regime(regime)
-            if isinstance(template, (list, tuple)):
-                if varname not in template:
-                    raise UserInputError(f"Could not determine regime for custom {errorname} graph variable.")
-            else:
-                try:
-                    getattr(template, varname)
-                except:
-                    raise UserInputError(f"Could not find custom {errorname} graph variable in regime.")
-            real_template, units = self._get_custom_units(regime, varname)
-            if not units:
-                raise UserInputError(f"Could not determine units for custom {errorname} graph variable.")
-            return units
+        assert regime and isinstance(regime, str)
+        assert varname and isinstance(varname, str)
+        regime, template = self._get_regime(regime)
+        if isinstance(template, (list, tuple)):
+            if varname not in template:
+                raise UserInputError(f"Could not determine regime for custom {errorname} graph variable.")
+        else:
+            try:
+                getattr(template, varname)
+            except:
+                raise UserInputError(f"Could not find custom {errorname} graph variable in regime.")
+        real_template, units = self._get_custom_units(regime, varname)
+        if not units:
+            raise UserInputError(f"Could not determine units for custom {errorname} graph variable.")
+        return units
 
     def set_custom_graph(self, x_regime=None, x_var=None, y1_regime=None, y1_var=None, y2_regime=None, y2_var=None):
         if x_var:
@@ -313,6 +315,9 @@ class GraphOutput:
         self.series['pathv'].append(self.x(end, 1))
 
     def graph(self, umunit, casecount, net_dilution):
+        if self.stop_planprofile_graphs:
+            return
+
         xy_pos = self.x(umunit.element.v_surface_tdsp, 1)
         if self.graph_by_depth:
             z_pos = self.z(umunit.element.depth)
@@ -504,7 +509,7 @@ class GraphOutput:
             convert_x=True
         )
         if umunit.model_params.model != Model.PDS:
-            self.series["path"].append(self.x((umunit.element.v_velocity, umunit.element.v_velocity), 1))
+            self.plot_plan(path=(umunit.element.v_velocity[0], umunit.element.v_velocity[1]))
 
     def graph_end(self, umunit, casecount, netdilution):  # (oc) intended for plotting custom casecount graph
         # from vmunit.graph4panel
@@ -513,6 +518,8 @@ class GraphOutput:
             casecount,
             units.Concentration.convert(umunit.element.concentration, self.concentration_units)
         ))
+        if self.stop_planprofile_graphs:
+            return
         # from vmunit.graph39
         if self.custom_graph:
             if self.custom_y1:
@@ -539,6 +546,8 @@ class GraphOutput:
         )
 
     def plot_profile(self, trajectory=None, boundary_1=None, boundary_2=None, convert_xz=True):
+        if self.stop_planprofile_graphs:
+            return
         if trajectory is not None:
             self.series["trajectory"].append(self.xz(trajectory) if convert_xz else trajectory)
         if boundary_1 is not None:
@@ -547,6 +556,8 @@ class GraphOutput:
             self.series["boundary2"].append(self.xz(boundary_2) if convert_xz else boundary_2)
 
     def plot_plan(self, path=None, out_1=None, out_2=None, convert_x=True):
+        if self.stop_planprofile_graphs:
+            return
         if path is not None:
             self.series["path"].append(self.x(path, 1) if convert_x else path)
         if out_1 is not None:
@@ -555,6 +566,8 @@ class GraphOutput:
             self.series["out2"].append(self.x(out_2, 1) if convert_x else out_2)
 
     def plot_dilution(self, displacement, dilution, convert_x=True, cl_series=False):
+        if self.stop_planprofile_graphs:
+            return
         sname = "cldilution" if cl_series else "dilution"
         self.series[sname].append((
             self.x(displacement) if convert_x else displacement,
@@ -562,6 +575,8 @@ class GraphOutput:
         ))
 
     def plot_density(self, density, depth, convert_z=True):
+        if self.stop_planprofile_graphs:
+            return
         self.series["density"].append((
             density,
             self.z(depth) if convert_z else depth

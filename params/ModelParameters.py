@@ -1,4 +1,6 @@
 from enum import Enum
+from ..globals import UserInputError
+from .AbstractParameters import AbstractParameters
 
 
 # MODEL enumerated type (sorta)
@@ -95,9 +97,11 @@ class FarfieldDiffusivity(Enum):
                 return ""
 
 
-class ModelParameters:
+class ModelParameters(AbstractParameters):
 
     def __init__(self):
+        super().__init__()
+
         # model type
         self.model                      = Model.UM3
         self.casecount                  = 1
@@ -208,8 +212,28 @@ class ModelParameters:
             setattr(c, key, getattr(self, key))
         return c
 
-    def get(self, key):
-        return getattr(self, key)
-
-    def set(self, key, value):
-        return setattr(self, key, value)
+    def validate(self):
+        self._validate_enum(self.model, "model type", Model)
+        self._validate_enum(self.bacteria_model, "bacteria model", BacteriaModel)
+        self._validate_enum(self.similarity_profile, "similarity profile", SimilarityProfile)
+        self.contraction_coeff  = self._validate(self.contraction_coeff, "contraction coefficient")
+        self.light_absorb_coeff = self._validate(self.light_absorb_coeff, "light absorption coefficient")
+        self.aspiration_coeff   = self._validate(self.aspiration_coeff, "aspiration coefficient")
+        if self.brooks_far_field:
+            self.ff_increment   = self._validate(self.ff_increment, "far-field increment", allow_zero=False, allow_negative=False)
+            self._validate_enum(self.farfield_diffusivity, "far-field diffusivity", FarfieldDiffusivity)
+        if self.tidal_pollution_buildup:
+            if self.brooks_far_field:
+                raise UserInputError("Cannot select both Brooks Far Field and Tidal Pollution Buildup models")
+            self.tpb_channel_width       = self._validate(self.tpb_channel_width, "channel width (TPB)", allow_zero=False, allow_negative=False)
+            self.tpb_segment_length      = self._validate(self.tpb_segment_length, "segment length (TPB)", allow_zero=False, allow_negative=False)
+            self.tpb_upstream_dir        = self._validate(self.tpb_upstream_dir, "upstream direction (TPB)")
+            self.tpb_coast_bin           = self._validate(self.tpb_coast_bin, "coast bin (TPB)", allow_zero=False, allow_negative=False, as_integer=True, min=10, max=99)
+            self.tpb_coast_concentration = self._validate(self.tpb_coast_concentration, "coast concentration (TPB)", allow_negative=False)
+            self.tpb_mixing_zone_ceil    = self._validate(self.tpb_mixing_zone_ceil, "mixing zone depth (TPB)", allow_negative=False)
+        self._validate_enum(self.max_reversals, "max vertical reversals", MaxVerticalReversals)
+        self.max_dilution                = self._validate(self.max_dilution, "maximum dilution", allow_zero=False, allow_negative=False)
+        self.write_step_freq             = self._validate(self.write_step_freq, "write step frequency", allow_zero=False, allow_negative=False)
+        if self.use_shore_vector:
+            self.dist_to_shore           = self._validate(self.dist_to_shore, "distance to shore", allow_zero=False, allow_negative=False)
+            self.dir_to_shore            = self._validate(self.dir_to_shore, "direction to shore")

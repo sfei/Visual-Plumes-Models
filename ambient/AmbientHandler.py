@@ -1,7 +1,7 @@
 import math
 from .. import units
 from ..globals import missing, UserInputError
-from .. import helpers
+from ..helpers import is_truthy, convert_float
 from ..params.ModelParameters import ModelParameters
 from .Ambient import Ambient
 from .AmbientStore import AmbientStore, Interpolation
@@ -22,28 +22,51 @@ class AmbientHandler:
         self.Qstream       = 0.0
         self._was_filled   = False
 
-    def fill(self, model_params, ambient_stack, ambient_ts_stacks, diff_params=None, orig_ambient=None):
+    @staticmethod
+    def _validation_error(var_name, err_message):
+        """ Simple function for raising UserInputError. Encapsulated here so can reference in lambda functions. """
+        raise UserInputError(f"Error in ambient inputs: {var_name} {err_message}")
+
+    def _validate(self, value, var_name, allow_nan=False, allow_zero=True, allow_negative=True, allow_none=False):
+        """ Simple validation function for numeric input values.
+        Args:
+            value: The value to check.
+            var_name: The value name, formatted for printing if an error occurs.
+            allow_nan: (Optional, default=False) If false, NaN values will fail validation.
+            allow_zero: (Optional, default=True) If false, zero values will fail validation.
+            allow_negative: (Optional, default=True) If false, negative values will fail validation.
+            allow_none: (Optional, default=False) If true, None values will be allowed and left as is.
+        Returns: The validate value
         """
-        Set up the handler by providing the ambient stack of ambient conditions by depth layers. Conditions at the depth
-        layers will be appropriately processed after copying.
-        :param model_params:       The ModelParameters.
-        :param ambient_stack:      The ambient stack (as a list of Ambient ordered in increasing depth).
-        :param ambient_ts_stacks:  Additional ambient conditions pulled from timeseries (as map of stacks per var type)
-        :param diff_params:        Optional DiffuserParameters (just used to pull depth for QStream calc).
-        :param orig_ambient:       Optional Ambient to copy initial values.
+        if allow_none and not is_truthy(value, zero_is_true=True, nan_is_true=True):  # allow NaNs to pass to convert
+            return None
+        return convert_float(
+            value=value,
+            allow_nan=allow_nan,
+            allow_zero=allow_zero,
+            allow_negative=allow_negative,
+            error_handler=lambda msg: self._validation_error(f"{var_name} is", msg)
+        )
+
+    def fill(self, model_params, ambient_stack, ambient_ts_stacks, diff_params=None, orig_ambient=None):
+        """ Set up the handler by providing the ambient stack of ambient conditions by depth layers. Conditions at the
+        depth layers will be appropriately processed after copying. Input validation is also handled within.
+        Args:
+            model_params: The ModelParameters.
+            ambient_stack: The ambient stack (as a list of Ambient ordered in increasing depth).
+            ambient_ts_stacks: Additional ambient conditions pulled from timeseries (as map of stacks per var type)
+            diff_params:  (Optional) DiffuserParameters (just used to pull depth for QStream calc).
+            orig_ambient: (Optional) Ambient to copy initial values.
         """
         # This has been reworked somewhat to separate the UI from model. Assumes records is a list of Ambient instances sent
         # by UI, for a given ambient case, in order of top to bottom.
         self.ambient_stack = [r.copy() for r in ambient_stack]
-        # convert z to depths
-        last_z = -9999
-        for i, amb in enumerate(self.ambient_stack):
-            amb.depth = self.get_z(amb.z, model_params.bottom_depth)
-            if amb.depth <= last_z:
-                raise UserInputError(f"Ambient layer out of order (f{i}:f{amb.z}). Ambient layers must be in order of increasing depth.")
-            last_z = amb.depth
-        record_count = self._validate_records(self.ambient_stack)
+        # validate z-values and convert to depths (table)
+        record_count = self._validate_z_values(self.ambient_stack, model_params.bottom_depth)
+        # validate rest of records (converts to None-type if falsey and not zero)
+        self._validate_records()
 
+        # parse timeseries data
         self.ts_amb_stacks = {}
         if ambient_ts_stacks:
             for vkey in self.ambient_store._input_vars_:
@@ -53,19 +76,13 @@ class AmbientHandler:
                 if vkey not in ambient_ts_stacks:
                     raise UserInputError(f"Ambient timeseries data indicated but not supplied for {vkey}")
                 self.ts_amb_stacks[vkey] = [r.copy() for r in ambient_ts_stacks[vkey]]
-                # convert z to depths
-                for amb in self.ts_amb_stacks[vkey]:
-                    amb.depth = self.get_z(
-                        amb.z,
-                        model_params.bottom_depth,
-                        z_is_depth=store.z_is_depth,
-                        z_units=store.ts_depth_units
-                    )
-                self._validate_records(self.ts_amb_stacks[vkey])
+                # validate z values and convert to depths (timeseries)
+                self._validate_z_values(self.ts_amb_stacks[vkey], model_params.bottom_depth)
 
         # first pass fills/interpolates in original units
         for ambient_cond in self.ambient_stack:
             self._fill_level_1(model_params, ambient_cond)
+
         # second pass converts to standard units, calcs density, sets bottom/orig conditions
         for ambient_cond in self.ambient_stack:
             self._fill_level_2(model_params, ambient_cond, orig_ambient)
@@ -74,26 +91,6 @@ class AmbientHandler:
                 ambient_cond=ambient_cond,
                 in_sigma=False
             )
-        # self._fill_level_2(model_params, self.bottom)
-        # self.bottom.density = seawater_density(
-        #     at_equilibrium=self.model_params.at_equilibrium,
-        #     ambient_cond=self.bottom,
-        #     in_sigma=False
-        # )
-
-        # for i, ambient_cond in enumerate(self.ambient_stack):
-        #     # keep overwritting bottom conditions from `below` layer returned
-        #     self.bottom = self._fill_level(model_params, ambient_cond, orig_ambient)
-        #     ambient_cond.density = seawater_density(
-        #         at_equilibrium=self.model_params.at_equilibrium,
-        #         ambient_cond=ambient_cond,
-        #         in_sigma=False
-        #     )
-        #     # TODO: what does this achieve?
-        #     # pre_z = z
-        #     # while ini_z == pre_z:
-        #     #     if ambient_cond.z is not None and ambient_cond.z != missing:
-        #     #         ini_z = units.Length.convert(ambient_cond.z, self.ambient_store.z.units, units.Length.METERS)
 
         # TODO: Qstream was in loop but just kept getting overwritten until the last..
         # TODO: handler timeseries current speeds
@@ -111,6 +108,13 @@ class AmbientHandler:
 
     # height adjustment by depth or height option
     def get_z(self, depth_value, bottom_depth=1e9, z_is_depth=None, z_units=None):
+        """ Get the actual depth value from a value which may be specified in depth of height.
+        Args:
+            depth_value: The depth of height value.
+            bottom_depth: (Optional, default=1e9) If specified in height, subtracted from this to convert to depth.
+            z_is_depth: (Optional, default=None) If not true or false, ascertained from self.ambient_store.z.z_is_depth.
+            z_units: (Optional, default=None) If not specified, ascertained from self.ambient_store.z.units.
+        """
         if depth_value is None:
             return None
         if z_units is None:
@@ -120,7 +124,12 @@ class AmbientHandler:
         z = units.Length.convert(depth_value, ufrom=z_units)
         return z if z_is_depth else bottom_depth - z
 
-    def _validate_records(self, ambient_records):
+    def _validate_z_values(self, ambient_records, bottom_depth):
+        """ Validate the depth layers. Checks for at least two levels, increasing depth, and validates values.
+        Args:
+            ambient_records: The ambient records.
+            bottom_depth: Bottom depth, needed to convert if given in height.
+        """
         record_count = len(ambient_records)
         if not record_count:
             raise UserInputError("No ambient conditions defined")
@@ -128,13 +137,14 @@ class AmbientHandler:
             raise UserInputError("Ambient water column must have at least 2 levels")
         # if self.get_z(ambient_records[0].z) != 0:
         #     raise UserInputError("Top row depth should be zero, please correct")
-        if ambient_records[0].depth == ambient_records[-1].depth:
-            raise UserInputError("Surface and bottom depths are equal")
         # new check to assure depths are properly ordered
         last_depth = 0
         for ambient_row in ambient_records:
-            if ambient_row.z is None:
-                raise UserInputError("Invalid ambient depth. No value provided.")
+            # validate input z values
+            ambient_row.z = self._validate(ambient_row.z, "depth or height", allow_negative=False)
+            # convert to depth
+            ambient_row.depth = self.get_z(ambient_row.z, bottom_depth)
+            # validate depth after conversion
             if ambient_row.depth is None:
                 raise UserInputError("Invalid ambient depth. Not depth converted.")
             if ambient_row.depth < 0:
@@ -142,7 +152,27 @@ class AmbientHandler:
             if ambient_row.depth < last_depth:
                 raise UserInputError("Depth layers must be supplied in increasing order from surface to bottom")
             last_depth = ambient_row.depth
+        if ambient_records[0].depth == ambient_records[-1].depth:
+            raise UserInputError("Surface and bottom depths are equal")
         return record_count
+
+    def _validate_records(self):
+        """ Validate ambient values by converting to floats. None types are preserved (as these are interpolated). """
+        for vkey in self.ambient_store._input_vars_:
+            if self.ambient_store.get(vkey).from_time_series:
+                continue
+            allow_zero = True
+            allow_negative = True
+            if vkey in ('bg_conc', 'decay_rate'):
+                allow_negative = False
+            for ambient_row in self.ambient_stack:
+                ambient_row.set(vkey, self._validate(
+                    value=ambient_row.get(vkey),
+                    var_name=vkey.replace("_", " "),
+                    allow_zero=allow_zero,
+                    allow_negative=allow_negative,
+                    allow_none=True
+                ))
 
     def _fill_level_1(self, model_params, ambient_cond):
         """
@@ -209,97 +239,10 @@ class AmbientHandler:
                     orig_ambient.set(vkey, converted)
                 ambient_cond.set(vkey, converted)
 
-    def _fill_level(self, model_params, ambient_cond, orig_ambient):
-        """
-        Fill ambient condition values at the given depth. Interpolations are handled for values at the sandwiching depth
-        layers (for values which are null/None), then the exact value at the target depth linearly interpolated between.
-        Though since this is only used by fill, which processes the ambient stack, I think the linear interpolation is a
-        moot process since either the above or below layer should be exact.
-        :param umunit:          The UMUnit instance (for pulling various model and diffuser parameters).
-        :param ambient_cond:    The ambient conditions for the given depth (copied in handler).
-        :param depth:           The depth.
-        :param bottom_depth:    The bottom depth/bathymetry.
-        :return:                The values for the bottom/below sandwiching depth layer
-        """
-        depth = ambient_cond.depth
-        bottom_depth = model_params.bottom_depth
-        # get the values (interpolated if necessary) for the nearest sandwiching depth layers
-        above, below = self._ambient_limits(depth, bottom_depth)
-        if below.depth == above.depth:
-            raise UserInputError("Same bracketing water levels!")
-
-        # set the ambient values at the diffuser origin (pulled in from ambientvalues)
-        # while also checking for any changed values from original (part of fillit)
-        # TODO: may have to be split again later
-        ambient_cond.depth = depth
-        ambient_cond.z = ambient_cond.depth  # should not use unconverted `z` after fill() was called, but just in case
-        z_factor = (depth - below.depth) / (above.depth - below.depth)
-        # changed = False
-
-        def fill_var(vkey):
-            nonlocal self, depth, bottom_depth, z_factor, ambient_cond, orig_ambient
-            ambient_store_at = self.ambient_store.get(vkey)
-            if ambient_store_at.from_time_series:
-                ts_above, ts_below = self._series_limits(
-                    ambient_store_at,
-                    self.ts_amb_stacks[vkey],
-                    depth,
-                    bottom_depth
-                )
-                above_val = ts_above.get(vkey)
-                below_val = ts_below.get(vkey)
-                from_units = ambient_store_at.units
-                use_z_factor = (depth - ts_below.depth) / (ts_above.depth - ts_below.depth)
-            else:
-                above_val = above.get(vkey)
-                below_val = below.get(vkey)
-                from_units = ambient_store_at.units
-                use_z_factor = z_factor
-            # convert all input values to default units
-            # exception for decay rate (not in ly/hr) -- left as is, conversion done at level-specific value pull
-            if vkey != "decay_rate" or self.ambient_store.decay_rate.units != units.DecayRate.LY_PER_HOUR:
-                converted = units.convert(
-                    (below_val + (above_val - below_val) * use_z_factor),
-                    units_or_var_name=vkey,
-                    from_units=from_units,
-                    model_params=model_params,
-                    celsius=ambient_cond.temperature,
-                    psu=ambient_cond.salinity,
-                    depth=depth
-                )
-                if orig_ambient:
-                    orig_ambient.set(vkey, converted)
-                ambient_cond.set(vkey, converted)
-            # check if changed versus original (I don't think this is used anywhere..)
-            # if not changed:
-            #     og_val = units.convert(
-            #         og_ambient_cond.get(vkey),
-            #         var_name=vkey,
-            #         from_units=from_units,
-            #         umunit=umunit,
-            #         z=z
-            #     )
-            #     if abs(og_val - converted) > 1e-6:
-            #         changed = True
-
-        fill_var('temperature')  # cause salinity conversion requires temperature to be in celsius
-        fill_var('salinity')     # cause decay rate also requires salinity to be in PSU
-        # do rest of conversions
-        for vkey in self.ambient_store._input_vars_:
-            if vkey not in ('salinity', 'temperature'):
-                fill_var(vkey)
-
-        # TODO: my understanding is that `bottom` keeps getting overwritten as fillit is called, but since it processes
-        # only once from surface to bottom, the last filled value becomes the permanent 'bottom' as used in interpolate
-        # self.bottom = below
-        # TODO: move bottom being set outside of this function, also is changed actually even used anywhere?
-        # return changed
-        return below
-
     def _ambient_limits(self, depth, bottom_depth):
         """
         Get the nearest over/under ambient condition layers with valid values that sandwich a given z-value.
-        :param depth:        he target depth.
+        :param depth:        The target depth.
         :param bottom_depth: The bottom depth/bathymetry.
         :return: Pair of Ambient conditions for values under and over
         """
@@ -415,14 +358,15 @@ class AmbientHandler:
         record_iterator = iter(ambient_ts_stack)
         ambient_row = next(record_iterator)
 
-        # get first valid value
+        # get first non-None value
+        var_name = ambient_store_at.var_key.replace("_", " ")
         if ambient_row.get(ambient_store_at.var_key) is None:
             while (ambient_row := next(record_iterator, None)) is not None:
                 if ambient_row.get(ambient_store_at.var_key) is not None:
                     break
         if ambient_row is None:
             raise UserInputError(f"Empty ambient timeseries data ({ambient_store_at.var_key})")
-        value_at = ambient_row.get(ambient_store_at.var_key)
+        value_at = self._validate(ambient_row.get(ambient_store_at.var_key), var_name, allow_none=True)
         above_value = below_value = value_at
         above_value_dep = below_value_dep = ambient_row.depth
 
@@ -430,20 +374,20 @@ class AmbientHandler:
             # get sandwiching (under/over) non-null values and depths of each
             while (ambient_row := next(record_iterator, None)) is not None:
                 value_at = ambient_row.get(ambient_store_at.var_key)
-                if helpers.is_truthy(value_at, zero_is_true=True):
-                    assert isinstance(value_at, (int, float))
+                if value_at is None:
+                    continue
+                above_value = below_value
+                below_value = value_at
+                above_value_dep = below_value_dep
+                below_value_dep = ambient_row.depth
+                if depth == below_value_dep:
+                    # exact depth match
                     above_value = below_value
-                    below_value = value_at
                     above_value_dep = below_value_dep
-                    below_value_dep = ambient_row.depth
-                    if depth == below_value_dep:
-                        # exact depth match
-                        above_value = below_value
-                        above_value_dep = below_value_dep
-                        break
-                    if depth < below_value_dep:
-                        # break when target depth is between
-                        break
+                    break
+                if depth < below_value_dep:
+                    # break when target depth is between
+                    break
 
         above_value, below_value = self._interpolate_value(
             depth,

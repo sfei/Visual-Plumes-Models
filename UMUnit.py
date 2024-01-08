@@ -993,8 +993,7 @@ class UMUnit:
                 kmag_surface_tdsp = magnitude(project_vector(self.element.v_surface_tdsp, K_UNIT_VECTOR))
                 if kmag_surface_tdsp >= magnitude_An:
                     self._update_status('atvmxz', True)
-                    if self.model_params.model != Model.PDS:
-                        self.graphit.graph_mixing_zone(self, self.model_params.casecount, self.net_dilution)
+                    self.graphit.graph_mixing_zone(self, self.model_params.casecount, self.net_dilution)
             if self.status['bottom'] and not self.status['bottomed']:
                 self._update_status('bottomed', True)
             if self.entrainment_limspc == 0 and self.element.diameter > 2*self.diff_params.depth:
@@ -1051,6 +1050,7 @@ class UMUnit:
             or self.element.dilution > self.model_params.max_dilution
             or self.check_status_changed('not_stream_limited')
             or (self.status['hitzid'] and not self.status['atvmxz'])  # (oc) ((mag(_pp(n.R_, k_)) > mag(An_)) and (not atvmxz))
+            or self.status['atvmxz']
             # (oc) or ((mag(_pp(n.R_, k_)) > c[vmxz]) and (not atvmxz))
             or (self.check_status_changed('reached_cig') and self.model_params.tpb_mixing_zone_ceil > 0)
             or (denomproduct < 0 < self.step and self.element.diameter > self.ambient.depth)

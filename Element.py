@@ -4,6 +4,7 @@ from .vectors import ZERO_VECTOR, GRAVITY_VECTOR, angle, magnitude, rescale_vect
 
 
 class Element:
+    """ Represents the control volume element that is simulating the bouyant jet from the diffuser. """
 
     def __init__(self):
         self.v_displace       = ZERO_VECTOR        # (formerly dR)  movement per timestep (displacement)

@@ -1,4 +1,6 @@
 from .. import units
+from ..helpers import convert_float, is_truthy
+from ..globals import UserInputError
 
 
 class DiffuserStoreSubset:
@@ -108,3 +110,26 @@ class DiffuserStore:
 
     def set(self, key, value):
         return setattr(self, key, value)
+
+    @staticmethod
+    def _validation_error(var_name, err_message):
+        raise UserInputError(f"Invalid diffuser store value: {var_name} {err_message}")
+
+    def validate(self):
+        for vname in self._vars_:
+            vsubset = self.get(vname)
+            vname = vname.replace("_", " ")
+            if not vsubset:
+                self._validation_error(vname, "is empty")
+            if not isinstance(vsubset, DiffuserStoreSubset):
+                self._validation_error(vname, "is invalid")
+            if not is_truthy(vsubset.units, zero_is_true=True):
+                self._validation_error(vname, "empty or invalid units")
+            if not vsubset.from_time_series:
+                continue
+            self.set(vname, convert_float(
+                value=vsubset.ts_increment,
+                allow_zero=False,
+                allow_negative=False,
+                error_handler=lambda msg: self._validation_error(f"{vname} time increment is", msg)
+            ))

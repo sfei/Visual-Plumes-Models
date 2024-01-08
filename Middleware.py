@@ -1,9 +1,9 @@
-import math, traceback
+import math, collections.abc, traceback
 import numpy as np
 from .globals import UserInputError
 from . import units
-from .helpers import num_format
-from .vectors import DEGREES_TO_RADIAN, GRAVITY_VECTOR, make_vector, unit_vector, rescale_vector, magnitude
+from .helpers import num_format, convert_float
+from .vectors import DEGREES_TO_RADIAN, GRAVITY_VECTOR, make_vector, unit_vector, rescale_vector
 from .UMUnit import UMUnit
 from .ambient.Ambient import Ambient
 from .ambient.AmbientStore import AmbientStore
@@ -42,7 +42,26 @@ def run(model_params, diffuser_params, diffuser_store, timeseries_handler, ambie
         A dictionary of outputs. See README.md for full description.
     """
     try:
-        return run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler, ambient_stack, ambient_store, output_handler)
+        has_timeseries_data = validate_inputs(
+            model_params,
+            diffuser_params,
+            diffuser_store,
+            timeseries_handler,
+            ambient_stack,
+            ambient_store,
+            output_handler
+        )
+        if not has_timeseries_data:
+            timeseries_handler = None  # not needed to pass, use this being None to skip any accidental handling
+        return run_unsafe(
+            model_params,
+            diffuser_params,
+            diffuser_store,
+            timeseries_handler,
+            ambient_stack,
+            ambient_store,
+            output_handler
+        )
     except AssertionError as e:
         return {
             "success": False,
@@ -57,24 +76,65 @@ def run(model_params, diffuser_params, diffuser_store, timeseries_handler, ambie
         }
 
 
-def run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler, ambient_stack, ambient_store, output_handler):
+def validate_inputs(model_params, diffuser_params, diffuser_store, timeseries_handler, ambient_stack, ambient_store, output_handler):
+    """ Validation and user input checking. Note full ambient checking goes in the AmbientHandler.fill() function as
+    ambient values have a lot more conditionals. """
+    assert isinstance(diffuser_store, DiffuserStore)
+    assert isinstance(ambient_store, AmbientStore)
+
+    # assign timeseries status in stores before parameter validations
+    has_timeseries_data = False
+    if timeseries_handler:
+        assert isinstance(timeseries_handler, TimeseriesHandler)
+        for key in diffuser_store._vars_:
+            diffuser_store.get(key).from_time_series = this_has_timeseries = (
+                hasattr(timeseries_handler.diffuser, key)
+                and getattr(timeseries_handler.diffuser, key) is not None
+            )
+            if this_has_timeseries:
+                has_timeseries_data = True
+        for key in ambient_store._input_vars_:
+            ambient_store.get(key).from_time_series = this_has_timeseries = (
+                hasattr(timeseries_handler.ambient, key)
+                and getattr(timeseries_handler.ambient, key) is not None
+            )
+            if this_has_timeseries:
+                has_timeseries_data = True
+        if timeseries_handler:
+            timeseries_handler.validate()
+
+    # validate stores
+    diffuser_store.validate()
+    ambient_store.validate()
+
+    # validate params
     assert isinstance(model_params, ModelParameters)
     assert isinstance(diffuser_params, DiffuserParameters)
-    assert isinstance(diffuser_store, DiffuserStore)
-    assert isinstance(diffuser_params, DiffuserParameters)
-    for stack in ambient_stack:
-        assert isinstance(stack, Ambient)
-    assert isinstance(ambient_store, AmbientStore)
-    if output_handler:
-        assert isinstance(output_handler, OutputUM3)
-
+    model_params.validate()
+    diffuser_params.validate(diffuser_store)
     if model_params.model != Model.UM3:
         raise UserInputError("Currently only the UM3 plume model is supported.")
     # TODO: if other supported models, some config and warnings need to be transcribed, makecheckset, modellabel
 
-    if model_params.brooks_far_field and model_params.tidal_pollution_buildup:
-        raise UserInputError("Cannot select both Brooks Far-Field  and Tidal Pollution Buildup. Select one or neither.")
+    # basic ambient stack validation (more involved validation handled later in handler fill)
+    assert isinstance(ambient_stack, collections.abc.Sequence) and not isinstance(ambient_stack, str)
+    assert len(ambient_stack)
+    def raise_ambient_error(msg):
+        raise UserInputError(f"Error in ambient inputs: depth or height is {msg}")
+    for stack in ambient_stack:
+        assert isinstance(stack, Ambient)
+        # just check z-value for now, which is required
+        stack.z = convert_float(stack.z, allow_zero=True, error_handler=raise_ambient_error)
 
+    # other assertions and validations
+    if output_handler:
+        assert isinstance(output_handler, OutputUM3)
+
+    # return if determined timeseries data exists or not
+    return has_timeseries_data
+
+
+def run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler, ambient_stack, ambient_store, output_handler):
     # otherwise tool will complain about no valid far-field current values, when not needed to be supplied
     if not model_params.brooks_far_field and len(ambient_stack):
         has_ff_vel = False
@@ -106,7 +166,6 @@ def run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler
         end_time_secs       = 0
         increment_time_secs = 1
     else:
-        assert isinstance(timeseries_handler, TimeseriesHandler)
         current_time_secs = units.Time.convert(
             timeseries_handler.start_time,
             timeseries_handler.units.start_time,
@@ -358,6 +417,11 @@ def run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler
             memos_ts_indices.append([f"Timeseries indices: {', '.join([str(i) for i in ts_indices])}"])
         else:
             memos_ts_indices.append([])
+
+        # stop graphing after 5 cases
+        if model_params.casecount == 6:
+            memos_model_params.append(f"\n\nNumber of cases >5. Graphing will be limited to the first five cases (excepting categorical graphs by case).")
+            graph_handler.stop_planprofile_graphs = True
 
         # output handler copy per case
         um_output = OutputUM3(output_handler) if output_handler else None

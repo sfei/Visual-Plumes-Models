@@ -148,9 +148,9 @@ class BrooksFarFieldRun:
         og_total_displacement = self.element.total_surf_dsp
 
         if dum_si is not None:
-            self.dilution = dum_si
+            self.element.dilution = dum_si
         if dum_conc is not None:
-            self.concentration = dum_conc
+            self.element.concentration = dum_conc
         if dum_sec is not None:
             self.run_time = dum_sec
         if dum_displace is not None:
@@ -165,9 +165,9 @@ class BrooksFarFieldRun:
 
         # reset params
         if dum_si is not None:
-            self.dilution = og_dilution
+            self.element.dilution = og_dilution
         if dum_conc is not None:
-            self.concentration = og_concentration
+            self.element.concentration = og_concentration
         if dum_sec is not None:
             self.run_time = og_run_time
         if dum_displace is not None:
@@ -322,18 +322,26 @@ class BrooksFarField:
                 self.get_ambient(ambient_handler, ambient_stack, ambient_store, timeseries, ff)
 
             # move timestep
-            ff.step += 1
+            ff.step       += 1
             ff.total_time += dt
-            ff.run_time += dt
+            ff.run_time   += dt
 
-            # adjust dilution, mass, velocity
-            ff.diffusivity = self.get_arg(ff.ambient.ff_diff_coeff, width, ff.run_time)
-            new_dilution = start_dilution/math.erf(ff.diffusivity**0.5)  # formerly `newS`
-            ff.element.d_mass = (new_dilution - ff.element.dilution)*orig_mass  # (oc) pm0 was wrong per Kenwyn experience 21 July 2001
+            # calc new dilution
+            ff.diffusivity             = self.get_arg(ff.ambient.ff_diff_coeff, width, ff.run_time)
+            prev_dilution              = ff.element.dilution
+            ff.element.dilution        = start_dilution/math.erf(ff.diffusivity**0.5)  # formerly `newS`
+            # calc change in mass and concentration
+            ff.element.d_mass          = (ff.element.dilution - prev_dilution)*orig_mass  # (oc) pm0 was wrong per Kenwyn experience 21 July 2001
+            prev_mass                  = ff.element.mass
+            prev_mass_pollutant        = ff.mass_pollutant
+            ff.mass_pollutant         += ff.element.d_mass*ff.ambient.bg_conc  # (oc) bug 2013 post-SF still needs work
+            ff.element.mass           += ff.element.d_mass
+            ff.element.concentration   = ff.mass_pollutant/ff.element.mass
+            # calc new velocity and new displacements, saving prev values for use in backmodeling
             ff.element.v_velocity = (
                 # (oc) _s( _sx(pm4,Vf), _sx(dm,Uam) )  *  1/(pm4+dm)
-                (ff.element.mass*ff.element.v_velocity + ff.element.d_mass*ff.v_ambient)
-                / (ff.element.mass + ff.element.d_mass)
+                (prev_mass*ff.element.v_velocity + ff.element.d_mass*ff.v_ambient)
+                / (prev_mass + ff.element.d_mass)
                 + ZERO_VECTOR  # TODO: isn't vector sum with zero vector pointless?
             )
             # (oc) bug Henry 2017 Salas, simplified next line
@@ -341,36 +349,34 @@ class BrooksFarField:
             prev_displacement          = ff.element.total_surf_dsp
             ff.element.v_surface_tdsp += dt*ff.ambient.ff_velocity*(ff.element.v_surface_tdsp/prev_displacement)
             ff.element.total_surf_dsp  = magnitude(ff.element.v_surface_tdsp)
+            change_displacement        = ff.element.total_surf_dsp - prev_displacement
 
             # next chain of this thing
             run_decay_memory = [ff.ambient.kt] + run_decay_memory[1:]
-
-            backmult = self.estbackmult(run_decay_memory, dt)
-            backvpol = ff.ambient.bg_conc
-            if not self.model_params.estimate_ff_background:
+            if self.model_params.estimate_ff_background:
+                backmult = self.estbackmult(run_decay_memory, dt)
+            else:
                 backmult = 0
 
-            ff.mass_pollutant       += ff.element.d_mass*backvpol  # (oc) bug 2013 post-SF still needs work
-            ff.element.mass         += ff.element.d_mass
-            ff.element.concentration = ff.mass_pollutant/ff.element.mass
-            ff.element.dilution      = new_dilution
-
             while ff.element.total_surf_dsp > ff.increment:
-                time2ink = dt*(ff.increment - prev_displacement)/(ff.element.total_surf_dsp - prev_displacement)
-                diffusivity = self.get_arg(ff.ambient.ff_diff_coeff, width, ff.run_time-dt+time2ink)
-                dumconc = (
-                    (mass_pollutant + ff.element.d_mass*backvpol/2.2*backmult)
-                    *math.exp(-ff.ambient.kt*time2ink)
-                    /(ff.element.mass - ff.element.d_mass)
-                )
-                if diffusivity >= 0:
-                    dumSi = ff.element.dilution / math.erf(diffusivity**0.5)
-                else:
-                    dumSi = ff.element.dilution / math.erf(-(abs(diffusivity))**0.5)
+                time2ink = dt*(ff.increment - prev_displacement)/change_displacement
+                dumsec = ff.run_time - dt + time2ink
+
+                dumconc = prev_mass_pollutant
+                if self.model_params.estimate_ff_background:
+                    dumconc += ff.element.d_mass*ff.ambient.bg_conc/2.2*backmult
+                dumconc *= math.exp(-ff.ambient.kt*time2ink)/prev_mass
+
+                diffusivity = self.get_arg(ff.ambient.ff_diff_coeff, width, dumsec)
+                sqrt_diff = abs(diffusivity)**0.5
+                if diffusivity < 0:
+                    sqrt_diff *= -1
+                dumSi = start_dilution / math.erf(sqrt_diff)
+
                 ff.output(
                     dum_conc=dumconc,
                     dum_si=dumSi,
-                    dum_sec=ff.run_time-dt+time2ink,
+                    dum_sec=dumsec,
                     dum_displace=ff.increment
                 )
                 ff.increment += self.model_params.ff_increment
