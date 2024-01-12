@@ -1,4 +1,5 @@
 class Ambient:
+    """ Struct-like class for holding ambient values at a specific depth level. """
     
     def __init__(self):
         # (oc) ambient file order

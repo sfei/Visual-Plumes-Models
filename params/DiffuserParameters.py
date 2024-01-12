@@ -3,6 +3,7 @@ from .AbstractParameters import AbstractParameters
 
 
 class DiffuserParameters(AbstractParameters):
+    """ Struct-like class for holding diffuser (and some model) parameters. """
 
     def __init__(self):
         super().__init__()

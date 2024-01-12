@@ -10,6 +10,12 @@ BLOCK_LENGTH = 10
 
 
 def run_tidal_pollution_buildup(umunit, tpb_model, increment_time_secs):
+    """ Middleware-ish/outer function for running tidal pollution buildup model.
+    Args:
+        umunit: finished UMUnit instance from which to initialize far-field model
+        tpb_model: instance of TidalPollutionBuildup
+        increment_time_secs: time increment between cases
+    """
     if not tpb_model.bin_volume:
         tpb_model.bottom_depth = umunit.model_params.bottom_depth
         tpb_model.bin_volume = tpb_model.segment_length*tpb_model.channel_width*tpb_model.bottom_depth
@@ -27,8 +33,13 @@ def run_tidal_pollution_buildup(umunit, tpb_model, increment_time_secs):
 
 
 class TidalPollutionBuildup:
+    """ Class for tidal pollution buildup model. """
 
     def __init__(self, model_params):
+        """
+        Args:
+            model_params: instance of ModelParameters
+        """
         assert isinstance(model_params, ModelParameters)
         self.channel_width       = model_params.tpb_channel_width        # (formerly binwid)
         self.segment_length      = model_params.tpb_segment_length       # (formerly binlen)
@@ -63,6 +74,15 @@ class TidalPollutionBuildup:
         self.seg_len_10 = BLOCK_LENGTH*self.segment_length
 
     def run(self, casecount, effluent_flow, time_increment, orig_mass, orig_mass_pollutant, ambient):
+        """
+        Args:
+            casecount: case number
+            effluent_flow: effluent flowrate of diffuser
+            time_increment: time increment between cases
+            orig_mass: original mass in kg
+            orig_mass_pollutant: original pollutant mass in kg
+            ambient: instance of Ambient at stop conditions
+        """
         while self.ibin1 >= NUMBER_BINS:
             # shift left by block length, filling in with zeros on right
             self.bin    = helpers.shift(self.bin, -BLOCK_LENGTH, 0)
@@ -90,7 +110,7 @@ class TidalPollutionBuildup:
             *math.cos(DEGREES_TO_RADIAN*(ambient.current_dir - self.upstream_dir))
             *time_increment
         )
-        self.ibin  = self.ibin1
+        self.ibin = self.ibin1
         self.ibin1 = int(self.binx//self.segment_length)
         if self.ibin1 < 0:
             # if nseries == 0:

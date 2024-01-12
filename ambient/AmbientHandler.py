@@ -10,6 +10,7 @@ from ..vectors import make_vector, DEGREES_TO_RADIAN, vector_average
 
 
 class AmbientHandler:
+    """ Class for handling ambient data. """
 
     def __init__(self, model_params, ambient_store):
         assert isinstance(model_params, ModelParameters)

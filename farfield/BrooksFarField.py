@@ -15,6 +15,13 @@ from ..vectors import DEGREES_TO_RADIAN, ZERO_VECTOR, K_UNIT_VECTOR, GRAVITY_VEC
 
 
 def run_far_field(umunit, brooks_ff_model, timeseries):
+    """ Middleware-ish/outer function for running Brooks far-field model.
+    Args:
+        umunit: Finished UMUnit instance from which to initialize far-field model.
+        brooks_ff_model: BrooksFarField instance.
+        timeseries: TimeseriesHandler instance.
+    Returns: OutputFarField instance.
+    """
     if not umunit.model_params.brooks_far_field:
         return
     if umunit.status['atvmxz']:
@@ -30,25 +37,27 @@ def run_far_field(umunit, brooks_ff_model, timeseries):
         outputit.memo('Isopleth closed in near-field, no far-field prediction necessary.')
         return outputit
     else:
-        # TODO: assumed surfaced, move conditions to, if not
+        # assumed surfaced, move conditions to, if not
         umunit.element.depth             = 0.0
         umunit.element.v_velocity[2]     = 0.0
         umunit.element.v_surface_tdsp[2] = 0.0
         umunit.element.total_surf_dsp    = magnitude(umunit.element.v_surface_tdsp)
 
-        angel = angle(
+        # set adjusted width based on something between stop condition angle and initial discharge angle
+        cos_v_angle = abs(math.cos(angle(
             project_vector(umunit.orig_element.v_velocity, GRAVITY_VECTOR),
             project_vector(umunit.v_ambient, GRAVITY_VECTOR)
-        )
-        cos_angel = abs(math.cos(angel))
+        )))
         min_cos = math.cos(70*DEGREES_TO_RADIAN)
-        if cos_angel < min_cos:
-            cos_angel = min_cos
-        width = umunit.element.diameter
-        width += round(umunit.diff_params.num_ports - 1)*umunit.diff_params.port_spacing*cos_angel
+        if cos_v_angle < min_cos:
+            cos_v_angle = min_cos
+        width = (
+            umunit.element.diameter
+            + (umunit.diff_params.num_ports-1)*umunit.diff_params.port_spacing*cos_v_angle
+        )
 
         messages = []
-        if umunit.element.diameter < umunit.diff_params.port_spacing and umunit.diff_params.num_ports > 1:
+        if umunit.diff_params.num_ports > 1 and umunit.element.diameter < umunit.diff_params.port_spacing:
             messages.append('Plumes not merged, Brooks method may be overly conservative.')
 
         # TODO: what is the point of these?
@@ -83,9 +92,22 @@ def run_far_field(umunit, brooks_ff_model, timeseries):
 
 
 class BrooksFarFieldRun:
+    """ Class for handling a single Brooks far-field model run. """
 
     def __init__(self, model_params, element, v_shore, v_source, acute_mixing_zone, mass_pollutant, width, diff_store,
                  ambient_store):
+        """
+        Args:
+            model_params: instance of ModelParameters
+            element: instance of Element at plume stop conditions
+            v_shore: shore vector
+            v_source: source vector
+            acute_mixing_zone: mixing zone distance in meters
+            mass_pollutant: mass pollutant in kg
+            width: adjusted init width in m
+            diff_store: instance of DiffuserStore
+            ambient_store: instance of AmbientStore
+        """
         assert isinstance(model_params, ModelParameters)
         assert isinstance(element, Element)
         assert isinstance(diff_store, DiffuserStore)
@@ -121,6 +143,7 @@ class BrooksFarFieldRun:
         if self.increment > acute_mixing_zone:
             self.increment = acute_mixing_zone
 
+        # preset outputs, not user-customizable at current
         match model_params.farfield_diffusivity:
             case FarfieldDiffusivity.POWER_4_3:
                 diff_col_name = "4/3 eddy diffusivity"
@@ -141,12 +164,18 @@ class BrooksFarFieldRun:
         self.outputit.add_parameter('model',    'diffusivity',      diff_col_name,              units.Unitless,         units.Unitless.UNITLESS)
 
     def output(self, dum_si=None, dum_conc=None, dum_sec=None, dum_displace=None):
+        """ Save values to output handler.
+        Args:
+            dum_si: if set, temporarily use this dilution value
+            dum_conc: if set, temporarily use this concentration value
+            dum_sec: if set, temporarily use this run time value
+            dum_displace: if set, temporarily use this total surface displacement value
+        """
         # certain outputs use dummy values, so save old values
         og_dilution           = self.element.dilution
         og_concentration      = self.element.concentration
         og_run_time           = self.run_time
         og_total_displacement = self.element.total_surf_dsp
-
         if dum_si is not None:
             self.element.dilution = dum_si
         if dum_conc is not None:
@@ -175,8 +204,13 @@ class BrooksFarFieldRun:
 
 
 class BrooksFarField:
+    """ Class for Brooks far-field model. Individual simulations handled via BrooksFarFieldRun. """
 
     def __init__(self, model_params):
+        """
+        Args:
+            model_params: instance of ModelParameters
+        """
         assert isinstance(model_params, ModelParameters)
         self.decay_memory = [0]*24  # memory of previous decay rates
         self.model_params = model_params
@@ -189,16 +223,27 @@ class BrooksFarField:
         self.ambient = None
 
     def get_ambient(self, ambient_handler, ambient_stack, ambient_store, timeseries, ff):
+        """ Parse ambient values needed for a given simulation of Brooks far-field.
+        Args:
+            ambient_handler: instance of AmbientHandler
+            ambient_stack: list of Ambient instances for conditions by depth layers
+            ambient_store: instance of AmbientStore
+            timeseries: instance of TimeseriesHandler
+            ff: instance of BrooksFarFieldRun
+        """
+        assert isinstance(ambient_store, AmbientStore)
         for layer in ambient_stack:
             assert isinstance(layer, Ambient)
-        assert isinstance(ambient_store, AmbientStore)
+
         if timeseries:
+            # move timeseries
             assert isinstance(timeseries, TimeseriesHandler)
             timeseries.set_time(ff.run_time)
             ambient_ts_stacks = timeseries.get_ambient()
         else:
             ambient_ts_stacks = {}
 
+        # get max bottom depth
         bottom_depth = self.model_params.bottom_depth
         if ambient_store.z.z_is_depth:
             max_z = max((amb.z for amb in ambient_stack))
@@ -213,6 +258,7 @@ class BrooksFarField:
                 bottom_depth = max_z
         self.model_params.bottom_depth = bottom_depth
 
+        # fill ambient values
         ambient_handler.fill(
             model_params=self.model_params,
             ambient_stack=ambient_stack,
@@ -225,6 +271,7 @@ class BrooksFarField:
             bottom_depth=bottom_depth
         )
 
+        # far-field current vector
         mag_shore = magnitude(self.v_shore)
         v_unit_shore = rescale_vector(1, self.v_shore)
         ff.v_ambient = make_vector(
@@ -244,6 +291,12 @@ class BrooksFarField:
             ff.v_ambient += np.dot(ff.v_ambient, ff.v_perp_shore)*ff.v_perp_shore
 
     def get_arg(self, ff_diff_coeff, width, time):
+        """ Appears to calculate calculates diffusivity.
+        Args:
+            ff_diff_coeff: far-field diffusivity coefficient
+            width: width
+            time: run time
+        """
         w2 = width**2
         a = 8.0*ff_diff_coeff*math.pow(width, 4.0/3.0)*time
         if self.model_params.farfield_diffusivity == FarfieldDiffusivity.POWER_4_3:
@@ -253,6 +306,11 @@ class BrooksFarField:
 
     @staticmethod
     def estbackmult(decay_memory, dt):
+        """ Some sort of backcast diffusivity average.
+        Args:
+            decay_memory: list of diffusivity values in memory
+            dt: timestep
+        """
         def f(i):
             return math.exp(-decay_memory[i-1]*dt)
         return (
@@ -261,8 +319,26 @@ class BrooksFarField:
             *(1+f(18)*(1+f(19)*(1+f(20)*(1+f(21)*(1+f(22)*(1+f(23)*(1+f(24))))))))))))))))))))))))
         )
 
-    def run(self, messages, diff_store, v_source, acute_mixing_zone, kt, isopleth_conc, element, width,
-            mass_pollutant, orig_mass, ambient_stack, ambient_store, timeseries, graphit):
+    def run(self, messages, diff_store, v_source, acute_mixing_zone, kt, isopleth_conc, element, width, mass_pollutant,
+            orig_mass, ambient_stack, ambient_store, timeseries, graphit):
+        """ Run a single far-field simulation.
+        Args:
+            messages: list of print messages to add to
+            diff_store: instance of DiffuserStore
+            v_source: source vector
+            acute_mixing_zone: mixing zone distance in meters
+            kt: ambient kt value
+            isopleth_conc: isopleth concentration
+            element: instance of Element at plume stop conditions
+            width: adjusted init width in m
+            mass_pollutant: mass pollutant in kg
+            orig_mass: original mass in kg
+            ambient_stack: list of Ambient instances for conditions by depth layers
+            ambient_store: instance of AmbientStore
+            timeseries: instance of TimeseriesHandler
+            graphit: instance of GraphOutputs
+        Returns: OutputFarField
+        """
         assert isinstance(ambient_store, AmbientStore)
         for layer in ambient_stack:
             assert isinstance(layer, Ambient)
@@ -272,8 +348,14 @@ class BrooksFarField:
         ff = BrooksFarFieldRun(self.model_params, element, self.v_shore, v_source, acute_mixing_zone, mass_pollutant,
                                width, diff_store, ambient_store)
 
+        # add messages to memo after outputter created
         for m in messages:
             ff.outputit.memo(m)
+
+        if self.model_params.farfield_diffusivity == FarfieldDiffusivity.POWER_4_3:
+            ff.outputit.memo(f"4/3 Power Law. Farfield dispersion based on wastefield width of {num_format(width)} m")
+        else:
+            ff.outputit.memo(f"Const Eddy Diffusivity. Farfield dispersion based on wastefield width of {num_format(width)} m")
 
         # why graph twice? already done in UMUnit
         # if self.model_params.use_shore_vector:
@@ -286,11 +368,6 @@ class BrooksFarField:
 
         ambient_handler = AmbientHandler(self.model_params, ambient_store)
         self.get_ambient(ambient_handler, ambient_stack, ambient_store, timeseries, ff)
-
-        if self.model_params.farfield_diffusivity == FarfieldDiffusivity.POWER_4_3:
-            ff.outputit.memo(f"4/3 Power Law. Farfield dispersion based on wastefield width of {num_format(width)} m")
-        else:
-            ff.outputit.memo(f"Const Eddy Diffusivity. Farfield dispersion based on wastefield width of {num_format(width)} m")
 
         # determine timestep (separate from umunit.timestep)
         has_timeseries = (

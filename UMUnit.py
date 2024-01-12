@@ -19,9 +19,21 @@ from .Element import Element
 
 
 class UMUnit:
+    """ UM3 plume model """
 
     def __init__(self, model_parameters, diffuser_parameters, diffuser_store, ambient_stack, ambient_store,
                  ambient_ts_stacks=None, output_handler=None, graph_handler=None):
+        """
+        Args:
+            model_parameters: ModelParameters instance.
+            diffuser_parameters: DiffuserParameters instance.
+            diffuser_store: DiffuserStore instance.
+            ambient_stack: List of Ambient instances for conditions by depth layers.
+            ambient_store: AmbientStore instance.
+            ambient_ts_stacks: Dictionary ambient values from timeseries. Optional.
+            output_handler: OutputUM3 instance. Optional, created if not supplied.
+            graph_handler: GraphOutput instance. Optional, created if not supplied.
+        """
         assert isinstance(model_parameters, ModelParameters)
         assert isinstance(diffuser_parameters, DiffuserParameters)
         assert isinstance(diffuser_store, DiffuserStore)
@@ -168,10 +180,12 @@ class UMUnit:
                 raise UserInputError("Error reading max reversals argument")
 
     def reset_output_booleans(self):
+        # doesn't appear to be used
         for key in self.status.keys():
             self.status[key] = key == 'not_stream_limited'
 
     def initialize(self):
+        """ Initialize model, not to be called directly. Called from merge(). """
         # standarize diffuser params units (copy from original as values will get modified)
         self.diff_params = self.og_diff_params.copy()
         # depth/temperature must be converted first as some conversions depend on
@@ -406,6 +420,7 @@ class UMUnit:
         self.update_status()
 
     def define_net_dilution(self):
+        """ Calculate net dilution form element dilution. """
         # this comes from main.pas
         if self.outputit.has_parameter('element', 'vcld'):  # (oc) bug 2013 enhancement  3.79
             self.net_dilution = self.element.dilution / (2.22 if self.element.diameter > 2 * self.diff_params.port_spacing else 3.79)
@@ -417,6 +432,7 @@ class UMUnit:
             self.net_dilution = 0  # shouldn't happen by divide by zero safeguard
 
     def convert_vectors(self):
+        """ Recalculate position, displacement, and angles. """
         # update coordinates
         self.element.x_displacement = self.element.v_surface_tdsp[0]
         self.element.y_displacement = self.element.v_surface_tdsp[1]
@@ -436,6 +452,7 @@ class UMUnit:
             self.element.horizontal_angle *= -1  # (oc) debug 1/2/00
 
     def kpro(self):
+        """ Don't know exactly but used in isoplet calc. """
         match self.model_params.similarity_profile:
             case SimilarityProfile.DEFAULT:
                 if self.model_params.model == Model.DKH:
@@ -470,6 +487,7 @@ class UMUnit:
         return arg
 
     def calc_isoplet(self):
+        """ Don't know exactly, but the isoplet calcs. """
         kappa  = 1.888
         isoval = 1.0
         kpro   = self.kpro()
@@ -537,6 +555,13 @@ class UMUnit:
         self.iso_diameter = self.um3isoplet*self.element.diameter
 
     def calc_entrainment(self, radius, d_radius, displacement):
+        """ Calculate entrainment parameters.
+        Args:
+            radius: The current radius.
+            d_radius: The change in radius.
+            displacement: The displacement since last timestep.
+        Returns: tuple of mass entrained and cth
+        """
         # calc new vectors
         v_horiz_velocity = change_vector(self.element.v_velocity, z=0)
         if angle(GRAVITY_VECTOR, self.element.v_velocity) != 0:
@@ -649,6 +674,7 @@ class UMUnit:
         return (eins + zwei), cth
 
     def merge(self):
+        """ Main model running function. """
         # initial conditions and reset
         self.initialize()
 
@@ -936,17 +962,34 @@ class UMUnit:
             self.outputit.memo('Bottom geometry consistent?  Try increasing port elev and/or ambient depth')
 
     def reset_status_changes(self):
+        """ Reset status change tracker. Call after each output and new statuses have been handled. """
         self.statuses_changed = []
 
     def check_status_changed(self, name, value=True):
+        """ Check whether status has changed to value since last output interval.
+        Args:
+            name: status name
+            value: status value (default=True)
+        """
         return self.status[name] == value and name in self.statuses_changed
 
     def _update_status(self, name, set_to):
+        """ Update status (status specific)
+        Args:
+            name: status name
+            set_to: bool
+        """
         self.status[name] = set_to
         if name not in self.statuses_changed:
             self.statuses_changed.append(name)
 
     def update_status(self, magnitude_An=0, denomproduct=0):
+        """ Update status of current simulation. Stop conditions, outputs, and graphing are handled from here. As such,
+        to be called each timestep and end of simulation.
+        Args:
+            magnitude_An:
+            denomproduct:
+        """
         # oc from stop condition
         if self.step > 0:
             if self.last_element.v_velocity[2]*self.element.v_velocity[2] < 0:
@@ -1026,6 +1069,11 @@ class UMUnit:
             self.graphit.graph(self, self.model_params.casecount, self.net_dilution)
 
     def vm_write_condition(self, denomproduct=0):
+        """ Check if condition is met for writing to outputs and/or graphing.
+        Args:
+            denomproduct:
+        Returns: tuple of booleans for write condition and graph condition met
+        """
         do_outputs = False  # goes to outputit()
         do_graphs  = False  # goes to grafit()
 
@@ -1078,6 +1126,10 @@ class UMUnit:
         return do_outputs, do_graphs
 
     def vm_stop_condition(self, density_reversal):
+        """ Check if simulation stop conditions met. If so, sets done status to true.
+        Args:
+            density_reversal: number of density reversals
+        """
         if (
             self.step > maxsteps
             or (self.step > 0 and density_reversal and self.model_params.max_traps_limit == 0)
@@ -1095,6 +1147,10 @@ class UMUnit:
     # semi-implementation of outputit in vmunit.pas
     # actual output functions are not transcribed here, but a few status checks are done during this output procedure
     def output_it(self, denomproduct=0):
+        """ Write outputs. Resets status changes when done.
+        Args:
+            denomproduct:
+        """
         self.element.buildup = self.model_params.tpb_bincon
 
         if (

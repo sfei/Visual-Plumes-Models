@@ -76,6 +76,13 @@ class Element:
         return setattr(self, key, value)
 
     def body_calc(self, last_element, dt, um3iso=1, in_init=False):
+        """ Collection of body calcs.
+        Args:
+            last_element: The previous element conditions.
+            dt: The timestep.
+            um3iso: I don't know exactly, comes from isoplet calcs. Defaults to 1.
+            in_init: True if from initialization.
+        """
         radius  = self.diameter*0.5
         d_angle = angle(self.v_velocity, last_element.v_velocity)
         # TODO: not sure what Rc represents exactly, but all these cross products produce a vector aligned to the faces

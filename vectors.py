@@ -70,7 +70,14 @@ GRAVITY_VECTOR = make_vector(z=-9.807)
 
 
 def change_vector(A, x=None, y=None, z=None):
-    # change a vector's component(s) to given values
+    """ Get copy of a vector with scalar component(s) changed.
+    Args:
+        A: the input vector
+        x: new x scalar (or None if same as input)
+        y: new y scalar (or None if same as input)
+        z: new z scalar (or None if same as input)
+    """
+    #
     B = np.copy(A)
     for i, new_value in enumerate((x,y,z)):
         if new_value is not None:
@@ -79,43 +86,51 @@ def change_vector(A, x=None, y=None, z=None):
 
 
 def unit_vector(A):
-    # convert a vector to a unit vector, that is, rescale components so magnitude=1
-    # basically rescale_vector(1, A)
+    """ Convert a vector to a unit vector, that is, rescale components so magnitude=1. Nasically rescale_vector(1, A).
+    Args:
+        A: the input vector
+    """
     if is_zero_vector(A):
         return ZERO_VECTOR
     return A / magnitude(A)
 
 
 def rescale_vector(new_magnitude, A):
-    # formerly _c()
-    # rescale a vector to a given magnitude, while maintaining angle/proportions
+    """ Rescale a vector to a given magnitude, while maintaining angle/proportions.
+    Args:
+        new_magnitude: the new magnitude to rescale to match
+        A: the input vector
+    """
     if is_zero_vector(A):
         return ZERO_VECTOR
     return A*(new_magnitude / magnitude(A))
 
 
 def magnitude(A):
-    # formerly mag()
-    # get magnitude of vector
+    """ Get magnitude of vector. """
     # equivalent to np.sum(np.square(A))**0.5, but using shorter numpy function
     return np.linalg.norm(A) if not is_zero_vector(A) else 0
 
 
 def is_zero_vector(A):
-    # quick check if zero vector
+    """ Quick check if zero vector. """
     return A[0] == A[1] == A[2] == 0
 
 
 # these functions could be called manually, but will leave in just in case
 def xcomp(A):
+    """ Get x-component of vector. """
     return A[0]
 def ycomp(A):
+    """ Get y-component of vector. """
     return A[1]
 def zcomp(A):
+    """ Get z-component of vector. """
     return A[2]
 
 
 def angle(A, B):
+    """ Get angle between two vectors. """
     # angle between two vectors
     if is_zero_vector(A) or is_zero_vector(B):
         # TODO: technically this is undefined, but (o.c.) returns this to match validation results
@@ -131,7 +146,7 @@ def angle(A, B):
 
 
 def vector_cosine(A, B):
-    # cosine of angle between two vectors
+    """ Get cosine of angle between two vectors. """
     # expanded name to be more clear and separate from simple cos() function
     if is_zero_vector(A) or is_zero_vector(B):
         return 0
@@ -139,6 +154,7 @@ def vector_cosine(A, B):
 
 
 def project_vector(A, onto_B):
+    """ Project vector A onto B. """
     # TODO, this is a little different than typical projection formula -- double check why
     # Traditionally it's dot product A*B divided by magnitude of B
     B = unit_vector(onto_B)
@@ -146,6 +162,14 @@ def project_vector(A, onto_B):
 
 
 def vector_average(z, dird, diru, zd, zu):
+    """ Vector average current direction from upper/lower values.
+    Args:
+        z: depth
+        dird: lower current direction
+        diru: upper current direction
+        zd: lower depth
+        zu: upper depth
+    """
     dird_radians = DEGREES_TO_RADIAN*dird
     diru_radians = DEGREES_TO_RADIAN*diru
     vdird = make_vector(math.cos(dird_radians), math.sin(dird_radians), 0)

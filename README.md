@@ -334,4 +334,3 @@ The graph data is provided per graph series, which are predefined and cannot cur
       - `in_units` (`int`) : The specific unit (a numeric from Unit type member variable) (e.g. `units.Length.METERS`).
       - `units_label` (`str`) : The formatted label for the specific unit given by `in_units`.
       - `axis_label` (`str`) : The axis label.
- 

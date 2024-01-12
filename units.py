@@ -460,6 +460,7 @@ class EddyDiffusivity(Units):
 
 
 def from_var_name(vkey):
+    """ Get Unit subclass from variable name. Returns Unitless if not recognized. """
     # TODO: update when vbot gets renamed (if ever)
     if vkey in ('z', 'depth', 'diameter', 'radius', 'height', 'x_velocity', 'y_velocity', 'port_spacing',
                 'port_elevation', 'acute_mixing_zone', 'chronic_mixing_zone', 'depth', 'bottom_depth', 'x_displacement',
@@ -502,6 +503,17 @@ def from_var_name(vkey):
 
 
 def convert(value, units_or_var_name, from_units, to_units=1, model_params=None, celsius=None, psu=None, depth=None):
+    """ Convert value in units from one type to another.
+    Args:
+        value: The value.
+        units_or_var_name: Either the Units subclass or the var name to pass to from_var_name().
+        from_units: The units type the value is in.
+        to_units: The units type to convert the value to. Defaults to base unit type (=1).
+        model_params: Required for decay rate and salinity conversions.
+        celsius: Required for decay rate and salinity conversions.
+        psu: Required for decay rate conversions.
+        depth: Required for decay rate and salinity conversions.
+    """
     if not isinstance(units_or_var_name, str):
         if not issubclass(units_or_var_name, Units):
             raise Exception("Invalid unit type provided (not subclass of Units)")

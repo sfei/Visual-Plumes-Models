@@ -31,7 +31,13 @@ mho = (
 
 # Used for seawater density function
 def rho(salinity, temperature, pressure):
-    # TODO: optimized by multiples of temperature powers, check no transcribing errors
+    """ Calculate seawater density. Not for direct use, generally speaking. Use seawater_density().
+    Args:
+        salinity: in PSU
+        temperature: in Celsius
+        pressure: in atmosphere
+    Returns: Density in kg m-3
+    """
     sal_p15 = salinity**(1.5)
     rhoST = (
         # x temperature^0
@@ -106,6 +112,16 @@ def rho(salinity, temperature, pressure):
 #-----------------------------------------------------------------------------------
 def seawater_density(salinity=None, temperature=None, at_equilibrium=False, ambient_cond=None, depth=None,
                      in_sigma=False):
+    """ Calculate seawater density.
+    Args:
+        salinity: in PSU. If not provided, grabbed from ambient_cond.
+        temperature: in Celsisus. If not provided, grabbed from ambient_cond.
+        at_equilibrium: If true, ignores depth/pressure.
+        ambient_cond: Ambient instance, optional, but used to grab other params if not provided.
+        depth: Depth in meters. Only needed if not at equilibrium. If not provided, grabbed from ambient_cond.
+        in_sigma: If true, as difference from 1000.
+    Returns: Density in kg m-3.
+    """
     if temperature is None or salinity is None:
         assert ambient_cond is not None
         assert isinstance(ambient_cond, Ambient)
@@ -125,11 +141,20 @@ def seawater_density(salinity=None, temperature=None, at_equilibrium=False, ambi
                 raise Exception("Density calculation not at equilibirum requires depth parameter or Ambient")
             assert isinstance(ambient_cond, Ambient)
             depth = ambient_cond.depth
+        # TODO: pressure estimated by depth, but shouldn't it be +1? Or is it pressure above STP?
         sigma = rho(salinity, temperature, depth*0.1) - 1000
     return sigma if in_sigma else 1000+sigma
 
 
 def salinity(temperature, density, at_equilibrium=False, depth=None):
+    """ Calculate salinity.
+    Args:
+        temperature: in Celsius
+        density: seawater density in kg m-3.
+        at_equilibrium: If true, ignores depth/pressure.
+        depth: Depth in meters. Only needed if not at equilibrium. If not provided, grabbed from ambient_cond.
+    Returns: PSU
+    """
     if density < -250:
         raise Exception("Density confusion? Salinity set to 0")
     s1 = 15.0
@@ -152,6 +177,15 @@ def salinity(temperature, density, at_equilibrium=False, depth=None):
 
 
 def mancini(model, arg, salinity, temperature, depth, topersec):
+    """ Calculate actual decay rate
+    Args:
+        model: bacteria model type
+        arg: unadjusted decay rate
+        salinity: in PSU
+        temperature: in Celsius
+        depth: in meters
+        topersec: ?
+    """
     assert isinstance(model, ModelParameters)
     lim = 1 if depth <= 0 else (1 - math.exp(-model.light_absorb_coeff*depth))/model.light_absorb_coeff/depth
     # these are random constant that were defined globally in main.pas
@@ -186,6 +220,11 @@ def mancini(model, arg, salinity, temperature, depth, topersec):
 
 
 def mho_conductivity(salinity, temperature):
+    """ Calculate salinity in conductivity from PSU
+    Args:
+        salinity: in PSU
+        temperature: in Celsius
+    """
     t = int(temperature)
     s = int(salinity/10)  # 10=delsal
     if 0 <= t <= 5 and 0 <= s <= 3:
@@ -199,6 +238,11 @@ def mho_conductivity(salinity, temperature):
 
 
 def mho_salinity(conductivity, temperature):
+    """ Calculate salinity in PSU from conductivity
+    Args:
+        salinity: in millimho
+        temperature: in Celsius
+    """
     t = int(temperature/5)  # 5=delstem
     if t < 0 or t > 5:
         # not good value

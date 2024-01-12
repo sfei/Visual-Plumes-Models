@@ -11,6 +11,7 @@ class Interpolation(Enum):
 
 
 class AmbientStoreSubset:
+    """ Store class for desc/metadata about a specific ambient parameter """
 
     def __init__(self, var_key, default_unit=units.Unitless.UNITLESS):
         # (oc) ambient file order
@@ -66,6 +67,7 @@ class AmbientStoreSubset:
 # could be replaced with pandas dataframe..
 # seems to be a dataset of all ambient conditions? Or at least by depth, but the var names are completely impenetrable
 class AmbientStore:
+    """ Store class for desc/metadata about ambient parameters """
     
     def __init__(self):
         # (oc) ambient file order

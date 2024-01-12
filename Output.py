@@ -39,18 +39,24 @@ _TEMPLATE_MODEL_BROOKS = [
 
 
 class Output:
+    """ Generic/abstract class for output handling subclasses. Basic idea is that instance of this have a set list of
+    parameters to get the value of and write at each output call. Then outputs can be pulled out in a format readily
+    converted to a tabular format. """
 
-    def __init__(self, copy=None, model_template=None):
-        if model_template is None:
-            model_template = _TEMPLATE_MODEL
+    def __init__(self, copy, model_template):
+        """
+        Args:
+            copy: If set, copy the parameters to track/output from this instance.
+            model_template: Template for available model parameters specific to subclass when calling superclass init.
+        """
         self._model_template = model_template
-        self._parameters     = []
-        self._is_running     = False
-        self._headers        = []
-        self._units          = []
-        self._output_units   = []
-        self._outputs        = []
-        self._memos          = []
+        self._parameters     = []     # list of parameters being tracked (as tuple of regime, param name)
+        self._is_running     = False  # once running, can't modify or else things break down
+        self._headers        = []     # list of parameter labels/headers (in order of tracked parameters)
+        self._units          = []     # list of parameter units as units subclass (in order of tracked parameters)
+        self._output_units   = []     # list of parameter units as units value (in order of tracked parameters)
+        self._outputs        = []     # list of outputs (as list of values in order of tracked parameters)
+        self._memos          = []     # list of memo print statements
         if not copy or not isinstance(copy, Output):
             return
         for i, p in enumerate(copy._parameters):
@@ -63,17 +69,29 @@ class Output:
             )
 
     def memo(self, message):
+        """ Add a print output to the memos. """
         self._memos.append(message)
 
     @property
     def memos(self):
+        """ Memos getter (as list of string values). """
         return self._memos
 
     @property
     def length(self):
+        """ Get length of """
         return len(self._parameters)
 
     def headers(self):
+        """ Iterator for looping through properties of headers for tracked parameters.
+        Returns: dict of
+            regime: The regime where parameter is from ('ambient', 'element', 'diffuser', or 'model').
+            name: The parameter name (as in actual var name in regime).
+            label: The formatted/pretty label for outputs.
+            units: The units type applicable to this value (as a Units subclass).
+            in_units: The units type (as units value application to Units subclass).
+            units_label: The units label.
+        """
         yield from (
             {
                 'regime':      p[0],
@@ -91,9 +109,16 @@ class Output:
         )
 
     def outputs(self):
+        """ Iterator for looping through rows of outputs, which returns a list of values by parameter (in order added),
+        by each output write event per iteration. """
         yield from self._outputs
 
     def _get_regime(self, regime):
+        """ Get the regime template.
+        Args:
+            regime: regime name
+        Returns: tuple of formatted regime name and template (a list of param names or an object)
+        """
         regime = regime.lower().strip()
         match regime:
             case 'ambient':
@@ -109,6 +134,12 @@ class Output:
         return regime, template
 
     def _validate_parameter(self, regime, parameter_name):
+        """ Validate a given parameter. Raises attribute error if invalid.
+        Args:
+            regime: regime name for which parameter comes from
+            parameter_name: the parameter name
+        Returns: tuple of formatted regime name and template (a list of param names or an object)
+        """
         regime, template = self._get_regime(regime)
         if isinstance(template, (list, tuple)):
             if parameter_name not in template:
@@ -118,6 +149,14 @@ class Output:
         return regime, template
 
     def add_parameter(self, regime, parameter_name, header=None, unit_type=units.Unitless, in_units=None):
+        """ Add a parameter to track.
+        Args:
+            regime: The regime for this parameter ('ambient', 'element', 'diffuser', or 'model').
+            parameter_name: The parameter name (as in actual var name in regime).
+            header: The formatted/pretty label for outputs.
+            unit_type: The units type applicable to this value (as a Units subclass). Defaults to Unitless.
+            in_units: The units type (as units value application to Units subclass).
+        """
         if self._is_running:
             raise Exception("Cannot adjust parameters once model is running")
         try:
@@ -134,12 +173,22 @@ class Output:
         self._output_units.append(in_units)
 
     def has_parameter(self, regime, parameter_name):
+        """ Check whether a given parameter is currently being tracked.
+        Args:
+            regime: regime name for which parameter comes from
+            parameter_name: the parameter name
+        """
         for (i_regime, i_param) in self._parameters:
             if i_regime == regime and i_param == parameter_name:
                 return True
         return False
 
     def remove_parameter(self, regime, parameter_name):
+        """ Remove a parameter from tracking.
+        Args:
+            regime: regime name for which parameter comes from
+            parameter_name: the parameter name
+        """
         if self._is_running:
             raise Exception("Cannot adjust parameters once model is running")
         try:
@@ -158,14 +207,21 @@ class Output:
             del self._output_units[remove_i]
 
     def _initialize(self):
+        """ Must call once first outputs are triggered to lock tracking parameters. """
         if self._is_running:
             return
         self._is_running = True
 
     def output(self, model):
+        """ Output function. To be overwritten in subclasses. """
         raise Exception("Method output() called from abstract class")
 
     def _output_values(self, model):
+        """ Get list of values for tracked parameters.
+        Args:
+            model: instance of model from which to pull values
+        Returns: list of values in order of tracked parameters
+        """
         output_values = []
         for regime, pname in self._parameters:
             match regime:
@@ -216,11 +272,17 @@ class Output:
 
 
 class OutputUM3(Output):
+    """ Output subclass for UM3 plume simulation. """
 
     def __init__(self, copy=None):
-        super().__init__(copy)
+        """
+        Args:
+            copy: If set, copy the parameters to track/output from this instance.
+        """
+        super().__init__(copy, _TEMPLATE_MODEL)
 
     def froude_no(self, model):
+        """ Calculate Froude number """
         if model.element.density == 0:
             return 0, "indeterminate, density=0"
         density_diff = model.ambient.density - model.element.density
@@ -239,6 +301,7 @@ class OutputUM3(Output):
         return froude_no, ""
 
     def strat_no(self, model):
+        """ Calculate strat number """
         arg = seawater_density(
             ambient_cond=model.ambient_stack[0],
             at_equilibrium=model.model_params.at_equilibrium
@@ -251,14 +314,21 @@ class OutputUM3(Output):
         )
 
     def spcg_no(self, model):
+        """ Calculate spcg number """
         if model.diff_params.num_ports <= 1:
             return 0
         return model.diff_params.port_spacing/model.element.diameter
 
     def k_no(self, model):
+        """ Calculate k number """
         return model.element.speed/model.ambient.current_speed
 
     def output(self, model, denomproduct=0):
+        """ Record values from model for outputs.
+        Args:
+            model: instance of UMUnit from which to grab parameters
+            denomproduct:
+        """
         if not self._is_running:
             self._initialize()
 
@@ -323,9 +393,18 @@ class OutputUM3(Output):
 class OutputFarField(Output):
 
     def __init__(self, copy=None):
+        """
+        Args:
+            copy: If set, copy the parameters to track/output from this instance.
+        """
         super().__init__(copy, _TEMPLATE_MODEL_BROOKS)
 
     def output(self, model):
+        """ Record values from model for outputs.
+        Args:
+            model: instance of BrooksFarField from which to grab parameters
+            denomproduct:
+        """
         if not self._is_running:
             self._initialize()
 

@@ -4,6 +4,7 @@ from ..globals import UserInputError
 
 
 class DiffuserStoreSubset:
+    """ Store class for desc/metadata about a specific diffuser parameter """
 
     def __init__(self, default_unit=units.Unitless.UNITLESS):
         # (oc) ambient file order
@@ -51,6 +52,7 @@ class DiffuserStoreSubset:
 
 
 class DiffuserStore:
+    """ Store class for desc/metadata about diffuser parameters """
 
     def __init__(self):
         self.diameter            = DiffuserStoreSubset(units.Length.METERS)          # (formerly vdia) diameter

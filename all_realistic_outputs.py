@@ -1,6 +1,10 @@
 from visualplumes import units, OutputUM3, AmbientStore, DiffuserStore, ModelParameters, FarfieldDiffusivity
 
 
+"""
+For example use only. Listing most-common/likely outputs to add to output table, with line examples of how to add them.
+"""
+
 # assumed objects created in preparing scenario run
 model_params   = ModelParameters()
 diff_store     = DiffuserStore()

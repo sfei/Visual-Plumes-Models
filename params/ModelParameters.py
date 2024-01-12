@@ -98,6 +98,7 @@ class FarfieldDiffusivity(Enum):
 
 
 class ModelParameters(AbstractParameters):
+    """ Struct-like class for holding model parameters. """
 
     def __init__(self):
         super().__init__()

@@ -6,7 +6,7 @@ from .Element import Element
 from .ambient.Ambient import Ambient
 from .ambient.AmbientStore import AmbientStore
 from .ambient.calculations import seawater_density, mancini
-from .globals import missing, UserInputError
+from .globals import UserInputError
 from .params.DiffuserParameters import DiffuserParameters
 from .params.DiffuserStore import DiffuserStore
 from .params.ModelParameters import Model, ModelParameters
@@ -35,8 +35,15 @@ _TEMPLATE_MODEL    = [
 
 
 class GraphOutput:
+    """ Class for tracking coordinates from graph outputs. """
 
     def __init__(self, model_params, ambient_store, diffuser_store):
+        """
+        Args:
+            model_params: instance of ModelParameters
+            ambient_store: instance of AmbientStore
+            diffuser_store: instance of DiffuserStore
+        """
         assert isinstance(model_params, ModelParameters)
         assert isinstance(ambient_store, AmbientStore)
         assert isinstance(diffuser_store, DiffuserStore)
@@ -168,6 +175,17 @@ class GraphOutput:
 
     @staticmethod
     def _get_units_meta(unit_type, in_units, axis_label):
+        """ Get formatted units metadata for outputs dict.
+        Args:
+            unit_type: unit subclass
+            in_units: unit value for unit type
+            axis_label: axis label
+        Returns: dict of
+            units: unit subclass
+            in_units: unit value for unit type
+            units_label: units label
+            axis_label: axis label
+        """
         return {
             'units':       unit_type,
             'in_units':    in_units,
@@ -181,6 +199,11 @@ class GraphOutput:
 
     @staticmethod
     def _get_regime(regime):
+        """ Get the regime template.
+        Args:
+            regime: regime name
+        Returns: tuple of formatted regime name and template (a list of param names or an object)
+        """
         regime = regime.lower().strip()
         match regime:
             case 'ambient':
@@ -194,6 +217,12 @@ class GraphOutput:
         return regime, template
 
     def _verify_custom_var(self, regime, varname, errorname):
+        """ Verify custom variable for graphing is valid.
+        Args:
+            regime: regime name
+            varname: variable name
+            errorname: formatted/pretty var name for if UserInputError is invalid
+        """
         assert regime and isinstance(regime, str)
         assert varname and isinstance(varname, str)
         regime, template = self._get_regime(regime)
@@ -211,6 +240,15 @@ class GraphOutput:
         return units
 
     def set_custom_graph(self, x_regime=None, x_var=None, y1_regime=None, y1_var=None, y2_regime=None, y2_var=None):
+        """ Set the custom graph variables.
+        Args:
+            x_regime: regime name for x-axis
+            x_var: var name for x-axis
+            y1_regime: regime name for y-axis
+            y1_var: var name for y-axis
+            y2_regime: regime name for y2-axis
+            y2_var: var name for y2-axis
+        """
         if x_var:
             x_units = self._verify_custom_var(x_regime, x_var, 'x')
         else:
@@ -235,6 +273,11 @@ class GraphOutput:
         self.custom_graph = self.custom_x and (self.custom_y1 or self.custom_y2)
 
     def set_org_dir(self, element, v_ambient):
+        """ Set the projection plane direction for profile graphs.
+        Args:
+            element: Element instance
+            v_ambient: ambient current vector
+        """
         message = None
         match self.projplane:
             case ProjectionPlane.EFFLUENT:
@@ -266,6 +309,15 @@ class GraphOutput:
         return message
 
     def _convert(self, unit_type, in_units, value, max_length=2, max_depth=1, multiplier=None):
+        """ Convert a value or values to desired units. Assumes value in default unit type (=1).
+        Args:
+            unit_type: the desired unit type value
+            in_units: the unit subclass for the value and conversion
+            value: the value to confirm from (in base/default units) (can be list)
+            max_length: if value is list, maximum expected list length (default=2)
+            max_depth: if value is list, maximum expected list depth/nesting (default=1)
+            multiplier: optional additional multiplier after conversion
+        """
         if isinstance(value, (list, tuple, np.ndarray)):
             max_depth -= 1
             if max_depth < 0:
@@ -286,16 +338,31 @@ class GraphOutput:
             return multiplier*unit_type.convert(value, ufrom=1, uto=in_units)
 
     def x(self, x, max_depth=0):
+        """ Shorthand for calling _convert() on length values in the set length units for plan/profile graphs.
+        Args:
+            x: value to convert
+            max_depth: maximum expected list depth/nesting (default=0)
+        """
         return self._convert(units.Length, self.length_units, x, max_depth=max_depth)
 
     def z(self, z, max_depth=0):
+        """ Shorthand for calling _convert() on depth values in the set length units for profile graphs.
+        Args:
+            z: value to convert
+            max_depth: maximum expected list depth/nesting (default=0)
+        """
         multiplier = -1 if self.graph_by_depth and self.negative_depth_axis else None
         return self._convert(units.Length, self.depth_units, z, max_depth=max_depth, multiplier=multiplier)
 
     def xz(self, xz):
+        """ Shorthand for calling _convert() on x/z values in the set length units for profile graphs.
+        Args:
+            xz: list of x and z values
+        """
         return tuple((self.x(xz[0]), self.z(xz[1])))
 
     def add_nulls(self):
+        """ Add nulls to graphs (to indicate break and new line). """
         for name in (
             # not cleanest but following o.c., these are series mainly tracked in graph() where this is called from
             "trajectory", "boundary1", "boundary2",
@@ -309,12 +376,19 @@ class GraphOutput:
             self.series[name].append((np.NaN, np.NaN))
 
     def graph_vector(self, start, end):
+        """ Add vector to pathv series. """
         if len(self.series['pathv']):
             self.series['pathv'].append((np.NaN, np.NaN))
         self.series['pathv'].append(self.x(start, 1))
         self.series['pathv'].append(self.x(end, 1))
 
     def graph(self, umunit, casecount, net_dilution):
+        """ Add next series to graphs.
+        Args:
+            umunit: instance of UMUnit
+            casecount: case number
+            net_dilution: net dilution
+        """
         if self.stop_planprofile_graphs:
             return
 
@@ -477,6 +551,12 @@ class GraphOutput:
                 self.series[seriesname].append((cvars[0], cvars[i]))
 
     def graph_mixing_zone(self, umunit, casecount, netdilution):
+        """ Graph mixing zone dilution.
+        Args:
+            umunit: instance of UMUnit
+            casecount: case number
+            netdilution: net dilution
+        """
         # from vmunit.mixgraf
         if umunit.element.concentration == 0:
             return
@@ -512,6 +592,12 @@ class GraphOutput:
             self.plot_plan(path=(umunit.element.v_velocity[0], umunit.element.v_velocity[1]))
 
     def graph_end(self, umunit, casecount, netdilution):  # (oc) intended for plotting custom casecount graph
+        """ Graph end of plume / stop condition dilution.
+        Args:
+            umunit: instance of UMUnit
+            casecount: case number
+            netdilution: net dilution
+        """
         # from vmunit.graph4panel
         self.series["enddilution"].append((casecount, netdilution))
         self.series["concentration"].append((
@@ -538,6 +624,11 @@ class GraphOutput:
                 self.series["custom2"].append((casecount, arg))
 
     def plot_ff_concentration(self, v_displacement, add_bdy):
+        """ Plot far-field concentration? Copied name from o.c. actually plots displacement.
+        Args:
+            v_displacement: vector displacement
+            add_bdy: add boundary buffer
+        """
         # from wfar.plotconc() -- some parts moved into BrooksFarField.py
         self.plot_plan(
             path=v_displacement,
@@ -546,6 +637,13 @@ class GraphOutput:
         )
 
     def plot_profile(self, trajectory=None, boundary_1=None, boundary_2=None, convert_xz=True):
+        """ Plot various profile graphs.
+        Args:
+            trajectory: trajectory coordinates (as x,z) (or None to skip)
+            boundary_1: boundary coordinates (as x,z) (or None to skip)
+            boundary_2: second boundary coordinates (as x,z) (or None to skip)
+            convert_xz: convert units or false if already converted (default=True)
+        """
         if self.stop_planprofile_graphs:
             return
         if trajectory is not None:
@@ -556,6 +654,13 @@ class GraphOutput:
             self.series["boundary2"].append(self.xz(boundary_2) if convert_xz else boundary_2)
 
     def plot_plan(self, path=None, out_1=None, out_2=None, convert_x=True):
+        """ Plot various plan graphs.
+        Args:
+            path: path coordinates (as x,y) (or None to skip)
+            out_1: boundary coordinates (as x,y) (or None to skip)
+            out_2: second boundary coordinates (as x,y) (or None to skip)
+            convert_x: convert units or false if already converted (default=True)
+        """
         if self.stop_planprofile_graphs:
             return
         if path is not None:
@@ -566,6 +671,13 @@ class GraphOutput:
             self.series["out2"].append(self.x(out_2, 1) if convert_x else out_2)
 
     def plot_dilution(self, displacement, dilution, convert_x=True, cl_series=False):
+        """ Plot dilution profile graph.
+        Args:
+            displacement: x-displacement
+            dilution: dilution value
+            convert_x: convert displacement units or false if already converted (default=True)
+            cl_series: true if cl-dilution otherwise normal dilution (default=False)
+        """
         if self.stop_planprofile_graphs:
             return
         sname = "cldilution" if cl_series else "dilution"
@@ -575,6 +687,12 @@ class GraphOutput:
         ))
 
     def plot_density(self, density, depth, convert_z=True):
+        """ Plot density profile graph.
+        Args:
+            density: density value
+            depth: depth value
+            convert_z: convert depth units or false if already converted (default=True)
+        """
         if self.stop_planprofile_graphs:
             return
         self.series["density"].append((
@@ -583,6 +701,12 @@ class GraphOutput:
         ))
 
     def _get_custom_units(self, regime, varname, umunit=None):
+        """ Get units for a custom variable.
+        Args:
+            regime: regime name
+            varname: var name
+            umunit: instance of UMUnit or None
+        """
         match regime:
             case 'diffuser':
                 template = umunit.diff_params if umunit else None
@@ -620,6 +744,13 @@ class GraphOutput:
         return template, to_units
 
     def _get_custom_var(self, regime, varname, umunit, do_convert=True):
+        """ Get value for custom variable.
+        Args:
+            regime: regime name
+            varname: var name
+            umunit: instance of UMUnit or None
+            do_convert: convert units (default=True)
+        """
         template, to_units = self._get_custom_units(regime, varname, umunit)
         if not template:
             return np.NaN
