@@ -306,11 +306,16 @@ class OutputUM3(Output):
             ambient_cond=model.ambient_stack[0],
             at_equilibrium=model.model_params.at_equilibrium
         )
+        if arg == model.ambient.density:
+            return 0
+        density_diff = model.ambient.density - model.element.density
+        if density_diff == 0 or model.diff_params.depth == 0:
+            return float('nan')
         return (
             (model.ambient.density - arg)
             *model.element.diameter
             /model.diff_params.depth
-            /(model.ambient.density - model.element.density)
+            /density_diff
         )
 
     def spcg_no(self, model):
@@ -321,6 +326,8 @@ class OutputUM3(Output):
 
     def k_no(self, model):
         """ Calculate k number """
+        if model.ambient.current_speed == 0:
+            return model.element.speed/1e-5
         return model.element.speed/model.ambient.current_speed
 
     def output(self, model, denomproduct=0):

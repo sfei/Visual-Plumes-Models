@@ -520,6 +520,8 @@ class UMUnit:
                 max_isoval = self.model_params.tpb_channel_width / self.element.diameter
                 if isoval > max_isoval:
                     isoval = max_isoval
+            elif kpro == 0 or sorc == camb:
+                isoval = 0.0
             else:
                 this_thing = self.element.dilution / kpro * (self.diff_params.isopleth - camb) / (sorc - camb)
                 if this_thing > 1.0:
@@ -537,20 +539,17 @@ class UMUnit:
                     if self.element.dilution < kpro:
                         a = self.orig_element.diameter*(kpro - self.element.dilution)/kpro
                         isoval = (isoval*(self.element.diameter - a) + a)/self.element.diameter
-                    if isoval > 1.0 and not self.status['ambconctoobig']:
-                        self.status['ambconctoobig'] = True
-                        self.outputit.memo('Ambient species greater than plume isopleth value, physical boundary graphed')
-                if isoval > 1.0:
-                    isoval = 1.0  # (o.c.) limits max diameter
-                # this was weird in o.c. -- was converted to concentration (w/o checking iso units), this is what I
-                # think is actually intended
-                if (
-                    self.diffuser_store.isopleth.units == units.Isopleth.CONCENTRATION
-                    and self.diff_params.isopleth > sorc
-                ):
-                    isoval = 0.0
-                    self.status['done'] = True
-                    self.outputit.memo('Isopleth value > base value, simulation stopped.')
+                    if isoval > 1.0:
+                        isoval = 1.0  # (o.c.) limits max diameter
+                        if not self.status['ambconctoobig']:
+                            self.status['ambconctoobig'] = True
+                            self.outputit.memo('Ambient species greater than plume isopleth value, physical boundary graphed')
+            # this was weird in o.c. -- was converted to concentration (w/o checking iso units), this is what I
+            # think is actually intended
+            if self.diffuser_store.isopleth.units == units.Isopleth.CONCENTRATION and self.diff_params.isopleth > sorc:
+                isoval = 0.0
+                self.status['done'] = True
+                self.outputit.memo('Isopleth value > base value, simulation stopped.')
         self.um3isoplet = isoval
         self.iso_diameter = self.um3isoplet*self.element.diameter
 
@@ -752,10 +751,10 @@ class UMUnit:
 
             # automatic timestep adjustment
             # (oc) unrealistic large dt correction if used at first step: Kenwyn Nov 2012
-            if self.step > 1:
+            if self.step > 1 and self.bint != 0 and self.thint != 0:
                 self.gamma = max(
                     mass_entrained/(self.bint*self.element.mass),
-                    angle(self.element.v_velocity, self.last_element.v_velocity) / self.thint
+                    angle(self.element.v_velocity, self.last_element.v_velocity)/self.thint
                 )
                 self.dt /= self.gamma
                 self.element.d_mass /= self.gamma
@@ -926,11 +925,14 @@ class UMUnit:
             # status update check (with stop, update, write checks)
             last_denom = denom1
             speed = magnitude(self.element.v_velocity)
-            denom1 = (
-                MAGNITUDE_GRAVITY*(self.ambient.density - self.element.density)/self.ambient.density*self.ambient.depth
-                + 0.5*(0.5*self.element.diameter*speed/self.ambient.depth)**2
-                - speed**2
-            )
+            if self.ambient.depth == 0:
+                denom1 = 1e9  # should surface before this hits, but just in case
+            else:
+                denom1 = (
+                    MAGNITUDE_GRAVITY*(self.ambient.density - self.element.density)/self.ambient.density*self.ambient.depth
+                    + 0.5*(0.5*self.element.diameter*speed/self.ambient.depth)**2
+                    - speed**2
+                )
             denomproduct = last_denom*denom1
             self.update_status(magnitude_An=magnitude(An_), denomproduct=denomproduct)
 
