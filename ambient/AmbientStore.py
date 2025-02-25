@@ -151,9 +151,9 @@ class AmbientStore:
                 continue
             if not is_truthy(vsubset.ts_depth_units, zero_is_true=True):
                 self._validation_error(vname, "time series units is empty or invalid")
-            self.set(vname, convert_float(
+            vsubset.ts_increment = convert_float(
                 value=vsubset.ts_increment,
                 allow_zero=False,
                 allow_negative=False,
                 error_handler=lambda msg: self._validation_error(f"{vname} time increment is", msg)
-            ))
+            )

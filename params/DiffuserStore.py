@@ -129,9 +129,9 @@ class DiffuserStore:
                 self._validation_error(vname, "empty or invalid units")
             if not vsubset.from_time_series:
                 continue
-            self.set(vname, convert_float(
+            vsubset.ts_increment = convert_float(
                 value=vsubset.ts_increment,
                 allow_zero=False,
                 allow_negative=False,
                 error_handler=lambda msg: self._validation_error(f"{vname} time increment is", msg)
-            ))
+            )
