@@ -110,7 +110,7 @@ class Angle(Units):
                 return ""
     @staticmethod
     def fix(value, units):
-        # fit within min-max (0-360 for degrees)
+        # fit within min-max (0-360 or 0-2pi)
         incr = 360 if abs(units) == 1 else 2.0*math.pi
         if value < 0:
             while value < 0:
@@ -120,21 +120,34 @@ class Angle(Units):
                 value -= incr
         return value
     @staticmethod
+    def convert_azimuth(value, units):
+        # works both ways from/to azimuth so left ambiguous
+        qangle = 90 if abs(units) == 1 else 0.5*math.pi
+        from_quad = to_quad = 1
+        value = Angle.fix(value, units)
+        # excluding special case where both grid/azimuth quadrant is same in Q1
+        if value > qangle:
+            from_quad += 1
+            while from_quad < 4 and value > from_quad*qangle:
+                from_quad += 1
+            to_quad = -(from_quad - 6)
+        # start of quadrant (convert to), plus difference from end of quadrant (convert from)
+        return qangle*(to_quad-1) + (qangle*from_quad - value)
+    @staticmethod
     def convert(value, ufrom, uto=DEGREES):
+        value = Angle.fix(value, ufrom)
         if ufrom == uto:
-            return Angle.fix(value, ufrom)
-        match ufrom:
-            case Angle.N_DEGREES:
-                value = 90 - value
-            case Angle.N_RADIANS:
-                value = math.pi*0.5 - value
-        value = super(Angle, Angle).convert(Angle.fix(value, ufrom), abs(ufrom), abs(uto))
-        match uto:
-            case Angle.N_DEGREES:
-                value = 90 - value
-            case Angle.N_RADIANS:
-                value = math.pi*0.5 - value
-        return Angle.fix(value, uto)
+            return value
+        azimuth_convert = False
+        if ufrom in (Angle.N_DEGREES, Angle.N_RADIANS):
+            azimuth_convert = True
+        # no need for double-conversion so flip boolean
+        if uto in (Angle.N_DEGREES, Angle.N_RADIANS):
+            azimuth_convert = not azimuth_convert
+        value = super(Angle, Angle).convert(value, abs(ufrom), abs(uto))
+        if azimuth_convert:
+            value = Angle.convert_azimuth(value, uto)
+        return value
 
 
 class Salinity(Units):
@@ -159,52 +172,79 @@ class Salinity(Units):
             case _:
                 return ""
     @staticmethod
+    def is_in_density(units):
+        return units in (Salinity.SIGMA_T, Salinity.KILOGRAMS_PER_CUBIC_METER, Salinity.POUNDS_PER_CUBIC_FOOT)
+    @staticmethod
+    def convert_density(density, ufrom, uto):
+        if ufrom == uto:
+            return density
+        match ufrom:
+            case Salinity.SIGMA_T:
+                density += 1000
+            case Salinity.POUNDS_PER_CUBIC_FOOT:
+                density = density/0.062427961
+        match uto:
+            case Salinity.SIGMA_T:
+                density -= 1000
+            case Salinity.POUNDS_PER_CUBIC_FOOT:
+                density *= 0.062427961
+        return density
+    @staticmethod
     def convert(value, ufrom, uto=PRACTICAL_SALINITY_UNITS, celsius=None, at_equilibrium=None, depth=None):
         if value < 0:
             raise Exception("Salinity < 0 (arises when units are converted and salinity is near zero)")
         if ufrom == uto:
             return value
-        do_convert = False
-        match ufrom:
-            case Salinity.MILLIMHO_PER_CENTIMETER:
-                if celsius is None:
-                    raise Exception("Salinity conversion requires celsius parameter.")
-                value, is_good = ambient.mho_salinity(value, celsius)
-                if not is_good:
-                    raise Exception("Out of range, re-establish units with \"Change label only\"\nIf multiple cases, some values may have been converted.")
-            case Salinity.KILOGRAMS_PER_CUBIC_METER:
-                value -= 1000
-                do_convert = True
-            case Salinity.SIGMA_T:
-                do_convert = True
-            case Salinity.POUNDS_PER_CUBIC_FOOT:
-                value = value/0.062427961 - 1000
-                do_convert = True
-        if do_convert:
+        convert_from_density = Salinity.is_in_density(ufrom)
+        convert_to_density = Salinity.is_in_density(uto)
+        # density to density, avoid doing extra calcs by assuming kg/m3 as base unit
+        if convert_from_density and convert_to_density:
+            return Salinity.convert_density(value, ufrom, uto)
+        # base in PSU
+        if convert_from_density:
             if celsius is None:
                 raise Exception("Salinity conversion requires celsius parameter.")
             if at_equilibrium is None:
                 raise Exception("Salinity conversion requires at_equilibrium parameter.")
-            value = ambient.salinity(celsius, value, at_equilibrium=at_equilibrium, depth=depth)
-        match uto:
-            case Salinity.MILLIMHO_PER_CENTIMETER:
-                if celsius is None:
-                    raise Exception("Salinity conversion requires celsius parameter.")
-                value, is_good = ambient.mho_salinity(value, celsius)
-                if not is_good:
-                    raise Exception("Out of range, re-establish units with \"Change label only\"\nIf multiple cases, some values may have been converted.")
-                return value
-            case Salinity.KILOGRAMS_PER_CUBIC_METER:
-                return value + 1000
-            case Salinity.SIGMA_T:
-                return ambient.salinity(celsius, value, at_equilibrium=at_equilibrium, depth=depth)
-            case Salinity.POUNDS_PER_CUBIC_FOOT:
-                return (value + 1000)*0.062427961
-            case _:
-                return value
+            density = Salinity.convert_density(value, ufrom, Salinity.KILOGRAMS_PER_CUBIC_METER)
+            value = ambient.salinity(celsius, density, at_equilibrium=at_equilibrium, depth=depth)
+        elif ufrom == Salinity.MILLIMHO_PER_CENTIMETER:
+            if celsius is None:
+                raise Exception("Salinity conversion requires celsius parameter.")
+            value, is_good = ambient.mho_salinity(value, celsius)
+            if not is_good:
+                raise Exception("Out of range, re-establish units with \"Change label only\"\nIf multiple cases, some values may have been converted.")
+        elif ufrom != Salinity.PRACTICAL_SALINITY_UNITS:
+            # not possible but just in case
+            raise Exception("Invalid salinity convert-from units")
+        if convert_to_density:
+            if celsius is None:
+                raise Exception("Salinity conversion requires celsius parameter.")
+            if at_equilibrium is None:
+                raise Exception("Salinity conversion requires at_equilibrium parameter.")
+            density = ambient.seawater_density(
+                salinity=value, 
+                temperature=celsius, 
+                at_equilibrium=at_equilibrium, 
+                depth=depth, 
+                in_sigma=False
+            )
+            return Salinity.convert_density(density, Salinity.KILOGRAMS_PER_CUBIC_METER, uto)
+        elif uto == Salinity.MILLIMHO_PER_CENTIMETER:
+            if celsius is None:
+                raise Exception("Salinity conversion requires celsius parameter.")
+            value, is_good = ambient.mho_conductivity(value, celsius)
+            if not is_good:
+                raise Exception("Out of range, re-establish units with \"Change label only\"\nIf multiple cases, some values may have been converted.")
+            return value
+        elif uto == Salinity.PRACTICAL_SALINITY_UNITS:
+            return value
+        else:
+            # not possible but just in case
+            raise Exception("Invalid salinity convert-to units")
     @staticmethod
     def validate(value, inunits, celsius=None, at_equilibrium=None, depth=None):
-        if inunits == Salinity.SIGMA_T:
+        if Salinity.is_in_density(inunits):
             value = Salinity.convert(
                 value,
                 inunits,
@@ -414,7 +454,7 @@ class FlowRate(Units):
     MEGALITERS_PER_DAY      = 86.4
     MEGAGALLONS_PER_DAY     = 22.824465
     CUBIC_FEET_PER_SECOND   = 35.314667
-    BARRELS_PER_DAY         = 86400/0.15898284
+    BARRELS_PER_DAY         = 86400/0.158987
     @staticmethod
     def label(uindex=1):
         match uindex:
@@ -523,14 +563,16 @@ def convert(value, units_or_var_name, from_units, to_units=1, model_params=None,
     if unit_handler is Salinity:
         assert model_params is not None
         assert celsius is not None
-        return unit_handler.convert(
+        v = unit_handler.convert(
             value,
             from_units,
+            to_units, 
             # TODO: it's important that temperature has already been converted to celsius
             celsius=celsius,
             at_equilibrium=model_params.at_equilibrium,
             depth=depth
         )
+        return v
     elif unit_handler is DecayRate:
         assert model_params is not None
         assert celsius is not None
@@ -538,6 +580,7 @@ def convert(value, units_or_var_name, from_units, to_units=1, model_params=None,
         return unit_handler.convert(
             value,
             from_units,
+            to_units, 
             bacteria_model=model_params.bacteria_model,
             celsius=celsius,
             psu=psu,

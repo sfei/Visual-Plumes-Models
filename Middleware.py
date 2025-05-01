@@ -512,6 +512,16 @@ def run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler
 
         # save diffuser and ambient values
         outputs_diff.append(tuple(
+            units.convert(
+                um_model.diff_params.get(d[1]),
+                units_or_var_name=d[2], 
+                from_units=1,
+                to_units=diff_out_units[i], 
+                model_params=model_params, 
+                depth=um_model.diff_params.get("depth"), 
+                celsius=(um_model.diff_params.get("temperature") if d[2] != units.Temperature else None)
+            )
+            if d[2] in (units.Salinity,) else
             d[2].convert(
                 um_model.diff_params.get(d[1]),
                 ufrom=1,
@@ -521,6 +531,17 @@ def run_unsafe(model_params, diffuser_params, diffuser_store, timeseries_handler
         ))
         outputs_amb.append(tuple(
             tuple(
+                units.convert(
+                    amb.get(a[1]),
+                    units_or_var_name=a[2], 
+                    from_units=1,
+                    to_units=amb_out_units[i], 
+                    model_params=model_params, 
+                    depth=amb.get("depth"), 
+                    celsius=(amb.get("temperature") if a[2] != units.Temperature else None), 
+                    psu=(amb.get("salinity") if a[2] != units.Salinity else None)
+                )
+                if a[2] in (units.Salinity, units.DecayRate) else
                 a[2].convert(
                     amb.get(a[1]),
                     ufrom=1,

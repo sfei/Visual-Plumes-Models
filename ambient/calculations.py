@@ -15,8 +15,6 @@ Kr = (
     1.43713e-3,   -5.77905e-7,   -6.12293e-6,   -0.603459,     -6.167e-5,      1.6483e-2,     2.2838e-3,   -1.6078e-6,
     -9.9348e-7,    9.1697e-10
 )
-# Used for seawater temperature function
-
 # Used for conductivity function
 mho = (
     (0,  9.341, 17.456, 25.238, 32.851),
@@ -99,7 +97,7 @@ def rho(salinity, temperature, pressure):
 # FUNCTION REMAPS
 #-----------------------------------------------------------------------------------
 # sigmat(sal, t)                  -> seawater_density(salinity, temperature, at_equilibrium, ambient_cond, in_sigma)
-# sigmasal(con, tm)               -> salinity(conductivity, temperature, at_equilibrium, params)
+# sigmasal(con, tm)               -> salinity(temperature, density, at_equilibrium, params)
 # ambientlevel(z)                 -> ambient_level(params, ambient_store, z)
 # interpolateambient(z, temponly) -> interpolate_ambient(params, ambient_store, z, temp_only=False)
 # mancini(arg, S, T, z, topersec) -> mancini(arg, salinity, temperature, z, topersec)
@@ -155,6 +153,7 @@ def salinity(temperature, density, at_equilibrium=False, depth=None):
         depth: Depth in meters. Only needed if not at equilibrium. If not provided, grabbed from ambient_cond.
     Returns: PSU
     """
+    density -= 1000  # working in sigma
     if density < -250:
         raise Exception("Density confusion? Salinity set to 0")
     s1 = 15.0
@@ -163,13 +162,15 @@ def salinity(temperature, density, at_equilibrium=False, depth=None):
     for i in range(21):
         if i >= 20:
             return missing
-        sig1 = seawater_density(s1, temperature, at_equilibrium=at_equilibrium, depth=depth)
-        sig2 = seawater_density(s2, temperature, at_equilibrium=at_equilibrium, depth=depth)
+        sig1 = seawater_density(s1, temperature, at_equilibrium=at_equilibrium, depth=depth, in_sigma=True)
+        sig2 = seawater_density(s2, temperature, at_equilibrium=at_equilibrium, depth=depth, in_sigma=True)
         ps = (sig2 - sig1) / 1e-8
         ds = 1e-7 if ps == 0 else (density - sig1)/ps
         s1 += ds
         s2 += ds
-        salinity = s1 + ds
+        if abs(ds) < 1e-7:
+            salinity = s1 + ds
+            break
     if salinity < 0:
         salinity = 0
         # memo(f"Small negative salinity ({salinity:.6f}) set to zero")  # (oc) sigmasal bug
@@ -225,7 +226,7 @@ def mho_conductivity(salinity, temperature):
         salinity: in PSU
         temperature: in Celsius
     """
-    t = int(temperature)
+    t = int(temperature/5)
     s = int(salinity/10)  # 10=delsal
     if 0 <= t <= 5 and 0 <= s <= 3:
         a = (salinity - s*10)/10  # 10=delsal
